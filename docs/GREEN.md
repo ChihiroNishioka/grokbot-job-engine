@@ -15,7 +15,7 @@
 |---|---|---|---|
 | G01 | JOB_API_TOKEN が未設定か 32 字未満なら `loadConfig` が例外を投げる。例外のメッセージに値が入らない | — | `test/config.test.ts` |
 | G02 | ALLOWED_SOURCE_CHAT_IDS が未設定か空なら例外を投げる。HOST の既定は `127.0.0.1`。数値の設定が範囲外なら例外を投げる | — | `test/config.test.ts` |
-| G03 | `.env.example` に 9 章のキーがすべてあり、値はダミーである。リポジトリ（src、test、docs、.env.example）に `ts.net`、`100.x.x.x` 形式の IP、`/workspace/`、`/home/` がない | — | `test/hygiene.test.ts` |
+| G03 | `.env.example` に 9 章のキーがすべてあり、値はダミーである。リポジトリ（src、test、docs、.env.example）に `ts.net`、`100.x.x.x` 形式の IP、マシン固有の絶対パスがない | — | `test/hygiene.test.ts` |
 
 ## 認証とレート制限
 
@@ -111,7 +111,7 @@
 
 | ID | 条件 | 15 章 | 置き場所の案 |
 |---|---|---|---|
-| G44 | `mask()` が `Bearer abc…`、32 字以上のトークン、`user@example.com`、`+81 90-1234-5678`、`09012345678` を伏せる。`J-000123` と `2026-11-11T00:00:00.000Z` はそのまま残る | — | `test/logging/mask.test.ts` |
+| G44 | `mask()` が `Bearer abc…`、32 字以上のトークン、`user@example.com`、`+81 90-1234-5678`、`09012345678` を伏せる。`J-000123` と `2026-11-11T00:00:00.000Z` はそのまま残る | — | `test/logging/mask.test.ts` | <!-- secret-scan:allow -->
 | G45 | 注入した出力先に集めたログの全行に、create の request_text（目印になる文字列を入れておく）、Authorization の値、claim_token、outbox の body が出ない | — | `test/logging/request-log.test.ts` |
 
 ## Dispatcher

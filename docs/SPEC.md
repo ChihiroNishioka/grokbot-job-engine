@@ -406,7 +406,7 @@ interface WakeDispatcher { wake(): Promise<WakeResult> }
     - リクエストログの path は Hono のルートのパターン（例 `/jobs/:id`）を出し、生のパスは出さない。マッチしなかったものは `unmatched` とする。
     - 機密のキー（`request_text`, `body`, `text`, `authorization`, `token`, `claim_token`, `password`, `secret`, `api_key`, `cookie`）は、入れ子のオブジェクトの中でも再帰的に `[REDACTED]` にする。
     - event の reason、error.message、outbox の last_error、例外のメッセージは保存・出力の前に `mask()` を通す。
-    - `mask()` が伏せるものに次を足す: `password=…` / `secret=…` / `token=…` 形式、`*.ts.net` のホスト名、`100.64.0.0/10` の IPv4。住所は形が決まらないので、自由入力をログに出さないことで防ぐ（mask では扱わない）。
+    - `mask()` が伏せるものに次を足す: `password=…` / `secret=…` / `token=…` 形式、`*.ts.net` のホスト名、RFC 6598 の共有アドレス範囲の IPv4。住所は形が決まらないので、自由入力をログに出さないことで防ぐ（mask では扱わない）。
 11. **job_id の形**：`^J-\d{6,}$` に統一する（G08 も 6 桁以上）。
 12. **Reconciler の limit**：「同じ対象を 2 回遷移させない」が冪等の意味。対象が limit 以下なら 2 回目は 0 件。limit を超えるときは、1 回目に limit 件、2 回目に残りを処理する。
 13. **設定の範囲**：PORT 1〜65535、LEASE_SECONDS_DEFAULT 10〜LEASE_SECONDS_MAX、LEASE_SECONDS_MAX 10〜86400、JOB_MAX_ATTEMPTS_DEFAULT 1〜10、REQUEST_TEXT_MAX_CHARS 1〜100000、RESULT_MAX_CHARS 1〜1000000、BODY_MAX_BYTES 1024〜10485760、RATE_LIMIT_PER_MINUTE 1〜100000、OUTBOX_LEASE_SECONDS 10〜3600、OUTBOX_MAX_ATTEMPTS 1〜20、QUEUED_STALE_SECONDS / OUTBOX_STALE_SECONDS 1〜604800、RECONCILE_INTERVAL_SECONDS 0〜86400。範囲外は起動しない（値はメッセージに出さない）。

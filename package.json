@@ -8,8 +8,8 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "start": "node dist/server.js",
-    "dev": "tsx src/server.ts",
+    "start": "node --env-file=.env dist/main.js",
+    "dev": "tsx --env-file=.env src/main.ts",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
