@@ -143,3 +143,22 @@
 | G58 | ログに出る path はルートのパターンで、未知のパス `/x/secret-like-value` は `unmatched` と出る。入れ子のオブジェクトの機密キーも `[REDACTED]`。event の reason、保存された error.message と last_error、500 の例外ログに、ダミーのトークン・メール・電話番号・`*.ts.net`・`100.64.x.x` が残らない | — | `test/logging/request-log.test.ts` |
 | G59 | reconcile の対象が limit+1 件あると、1 回目は limit 件、2 回目は 1 件、3 回目は 0 件 | 11 | `test/reconciler/jobs.test.ts` |
 | G60 | 設定の各整数が範囲外なら例外（値はメッセージに出ない）。LEASE_SECONDS_DEFAULT > LEASE_SECONDS_MAX も例外。scheduled_at は `Z`、`+09:00`、`-05:00` を受け付けて UTC に直し、オフセットなしは 400 | — | `test/config.test.ts`, `test/api/jobs.validation.test.ts` |
+
+## 方針変更（SPEC 13 章：Genie と Worker の経路）
+
+| ID | 条件 | 15 章 | 置き場所の案 |
+|---|---|---|---|
+| G61 | `GENIE_HOST` が loopback 以外、`HOST` が `0.0.0.0` / `::`、`GENIE_TOKEN` が 32 字未満、`GENIE_TOKEN` と `JOB_API_TOKEN` が同じ、`GENIE_ALLOWED_CHAT_IDS` が空か整数でない、のどれも loadConfig が例外（値はメッセージに出ない） | — | `test/config.test.ts` |
+| G62 | Ingress アプリに `/jobs` は 404、Job API アプリに `/ingress/genie` と `/genie/replies` は 404。Ingress は JOB_API_TOKEN では 401、Job API は GENIE_TOKEN では 401 | — | `test/ingress/apps.test.ts` |
+| G63 | 正しい Genie の payload（先頭 🪔）で 201 `{status:"created", job_id}`、ジョブが queued、request_text から 🪔 が除かれ、ack の outbox が 1 行（channel genie、キー `job:<id>:ack`、文面は 13.4 の受付）、ingress_messages に received_at が残る | 1, 2, 3（モック） | `test/ingress/genie.test.ts` |
+| G64 | 同じ guid を 3 回送る（Promise.all を含む）と、ジョブ・ack・ingress_messages はどれも 1 行で、2 回目以降は同じ job_id を返す | **8** | `test/ingress/genie.test.ts` |
+| G65 | 許可外の chat_id は 403 で行が増えない。sender_is_me=false は ignored で行が増えない（ingress_messages の ignored は可） | 13 | `test/ingress/genie.test.ts` |
+| G66 | 本文が `🧞‍♂️ 完了しました`、`🪔 🧞‍♂️ …`、`🧞 …`、先頭に空白のある `  🧞‍♂️…` は ignored（bot_reply）でジョブも outbox も作らない。空や 🪔 だけは ignored（empty） | **14** | `test/ingress/loop.test.ts` |
+| G67 | `/status`、`/cancel`、`/retry`、`/help` がそれぞれ 13.3 どおりに動き、command の outbox（キー `cmd:<guid>`）が 1 行できる。同じ guid の再送で再実行されない。別の chat のジョブと存在しないジョブは同じ「見つかりません」 | 7, **15** | `test/ingress/commands.test.ts` |
+| G68 | `GET /genie/replies`（cursor なし）が pending の genie 行を昇順で、13.5 の形（id `je-<n>`、chat_id 数値、in_reply_to_guid、created_at）で返し、cursor が最後の `o:<n>`。同じ cursor で取り直すと同じ内容。page の上限を超える分は次のページ | 2, 6（モック） | `test/ingress/replies.test.ts` |
+| G69 | `cursor=o:N` で取ると N 以下の pending の genie 行が sent（external_ref `genie:cursor`、event あり）になり、返事に出ない。ジョブの行は全列そのまま。形の違う cursor は 400。genie 以外の channel の行は出ない。`/outbox/claim` は genie の行を取らない | **12** | `test/ingress/replies.test.ts` |
+| G70 | 受付 → claim → complete（notify）→ 返事の取得で、同じ guid に ack と done の 2 件が別の id で出る | 6（モック） | `test/scenario/genie-flow.test.ts` |
+| G71 | Transport（偽の spawn）: 引数が `[tailscale, 'nc', host, port]`、送る内容が HTTP/1.1 で Authorization と Content-Length が付き、Content-Length と chunked の応答を読める | — | `test/worker/tailscale-nc.test.ts` |
+| G72 | ENOENT は `nc_not_found`、応答なしで終了は `connect_failed`、時間切れ（偽の時計かタイマー注入）は `timeout` で子プロセスを止める。どれも例外を投げず `unreachable:true` | — | `test/worker/tailscale-nc.test.ts` |
+| G73 | `runWorkerOnce` は、claim・complete・fail のどれかで届かないと `outcome:"unreachable"` で終わり、fail を呼ばない。その後 lease 切れ → reconcile で queued → 次の回に claim して done になる（Transport は app.request() に流すモック） | **11** | `test/worker/run-once.test.ts` |
+| G74 | worker-cli は届かないとき終了コード 3、API エラーは 4、使い方の誤りは 2。出力にトークンが出ない（トークンは一時ファイルから読む） | — | `test/worker/cli.test.ts` |

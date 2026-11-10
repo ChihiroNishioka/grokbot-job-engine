@@ -411,3 +411,90 @@ interface WakeDispatcher { wake(): Promise<WakeResult> }
 12. **Reconciler の limit**：「同じ対象を 2 回遷移させない」が冪等の意味。対象が limit 以下なら 2 回目は 0 件。limit を超えるときは、1 回目に limit 件、2 回目に残りを処理する。
 13. **設定の範囲**：PORT 1〜65535、LEASE_SECONDS_DEFAULT 10〜LEASE_SECONDS_MAX、LEASE_SECONDS_MAX 10〜86400、JOB_MAX_ATTEMPTS_DEFAULT 1〜10、REQUEST_TEXT_MAX_CHARS 1〜100000、RESULT_MAX_CHARS 1〜1000000、BODY_MAX_BYTES 1024〜10485760、RATE_LIMIT_PER_MINUTE 1〜100000、OUTBOX_LEASE_SECONDS 10〜3600、OUTBOX_MAX_ATTEMPTS 1〜20、QUEUED_STALE_SECONDS / OUTBOX_STALE_SECONDS 1〜604800、RECONCILE_INTERVAL_SECONDS 0〜86400。範囲外は起動しない（値はメッセージに出さない）。
 14. **scheduled_at**：`Z` か `±hh:mm` の付いた ISO 8601 だけを受け付け、UTC のミリ秒にして保存する。オフセットの無いものは 400。
+
+## 13. 方針変更（ちひろ、11/11 03:11）：入口と出口は Mac mini の Genie
+
+11 章の「入口と出口は Grok Bot 組み込みの Messages 機能」は取り消す。Routine の実行中には組み込みの Messages ツールが渡らないと分かったため。入口と出口は Mac mini の Genie（genie-in-messages）にする。受け付けるのは自分宛てのトークだけ。この章は 1〜12 章より優先する。
+
+### 13.1 待ち受けを 2 つに分ける
+
+| 待ち受け | 設定 | 既定 | 使う人 | ルート |
+|---|---|---|---|---|
+| Genie 用（Ingress） | `GENIE_HOST` / `GENIE_PORT` | `127.0.0.1` / `3321` | 同じ Mac mini の Genie | `GET /healthz`、`POST /ingress/genie`、`GET /genie/replies` |
+| Job API（Worker 用） | `HOST` / `PORT` | `127.0.0.1` / `3320` | box の Worker（Tailscale 経由） | 6 章の Job API と `/healthz` |
+
+- 2 つは別の Hono アプリ（`createIngressApp`、`createApp`）。互いのルートは出さない（Ingress に `/jobs` は無く、Job API に `/ingress` は無い）。
+- `GENIE_HOST` は `127.0.0.1`、`::1`、`localhost` のどれかだけを許す。ほかは起動しない。
+- `HOST` は Mac mini では tailnet 上の自分のアドレスを `.env` に書く（値はリポジトリに書かない）。`0.0.0.0` と `::` は起動しない（全部の口で待ち受けないため）。Funnel には出さない。
+- トークンは分ける。`GENIE_TOKEN`（32 字以上。Ingress だけに効く）と `JOB_API_TOKEN`（Job API だけに効く）。同じ値なら起動しない。
+- `GENIE_ALLOWED_CHAT_IDS`（必須、カンマ区切りの整数）。自分宛てトークの chat_id だけを書く。Ingress から作るジョブの source_chat_id はここに入っていなければならないので、`ALLOWED_SOURCE_CHAT_IDS` にも同じ値を入れる。
+
+### 13.2 `POST /ingress/genie`（Genie の webhook をそのまま受ける）
+
+- 認証: `Authorization: Bearer <GENIE_TOKEN>`。違えば 401。レート制限と本文サイズ上限は Job API と同じ。
+- 本文（Genie の `WebhookPayload` と同じ。strict）:
+  `{v:1, event:"message", idempotency_key:string, guid:string, chat_id:integer, text:string, created_at:string|null, sender_is_me:boolean, sender_name:string}`。`guid` と `idempotency_key` は 1〜256 字で同じ値。違えば 400。
+- 判定の順番（上で決まったら終わり）:
+  1. chat_id が `GENIE_ALLOWED_CHAT_IDS` に無い → 403 CHAT_NOT_ALLOWED（Genie は 4xx を再送しない）。
+  2. `sender_is_me` が false → 200 `{status:"ignored", reason:"not_from_me"}`。
+  3. 本文の先頭の空白・不可視文字と、先頭の 🪔（U+1FA94、続く U+FE0F と空白）を取り除く。残りの先頭が 🧞‍♂️（U+1F9DE U+200D U+2642、U+FE0F は任意。性別なしの 🧞 も含む）なら → 200 `{status:"ignored", reason:"bot_reply"}`（返信ループの防止）。
+  4. 残りが空 → 200 `{status:"ignored", reason:"empty"}`。
+  5. 同じ guid を前に受けていれば（ジョブでもコマンドでも）→ 200 で前回と同じ応答。行も outbox も増えない。
+  6. 残りが `/help`、`/status <job_id>`、`/cancel <job_id>`、`/retry <job_id>` → 管理コマンド（13.3）。
+  7. それ以外 → ジョブを作る（source=`imessage`、source_message_id=guid、source_chat_id=chat_id の 10 進文字列、requester_id=`self`、job_type=`general`、request_text=残りの本文）。同じトランザクションで受付の outbox（kind=`ack`、キー `job:<job_id>:ack`）を作る。応答は 201 `{status:"created", job_id}`。
+- 受け付けた guid は `ingress_messages`（guid PRIMARY KEY、chat_id、kind（job / command / ignored）、job_id、outbox_id、received_at、created_at）に残す（受信時刻と受付時刻の記録）。本文は保存しない（ジョブの request_text を除く）。
+- 本文、sender_name はログに出さない。
+
+### 13.3 管理コマンド
+
+| コマンド | 動き | 返信（outbox kind=`command`、キー `cmd:<guid>`） |
+|---|---|---|
+| `/help` | なし | 使い方の一覧 |
+| `/status J-000123` | 何も変えない | ジョブ ID、状態（日本語: 受付済み / 実行中 / 完了 / 失敗 / キャンセル済み）、試行回数、キャンセル要求の有無 |
+| `/cancel J-000123` | 6 章の cancel と同じ | 結果 |
+| `/retry J-000123` | 6 章の retry と同じ | 結果（上限なら「再実行の上限に達しています」） |
+
+- ジョブ単位のアクセス制御: コマンドで触れるのは、source_chat_id がそのメッセージの chat_id と同じジョブだけ。違うトークのジョブと存在しないジョブは、どちらも「見つかりません」と返す（存在を漏らさない）。
+- 形が違う（ID なし、未知のコマンド）は `/help` と同じ返信に「コマンドを読めませんでした」を付ける。
+- 応答は 200 `{status:"command", command}`。
+
+### 13.4 返信の文面（10 章の例に合わせる）
+
+- 受付: `依頼を受け付けました。\nジョブID：J-000123\n内容：<本文の先頭 40 字>\n状態：受付済み`
+- 完了（complete の `notify` が無いときに Worker が使う既定文）: `ジョブ J-000123 が完了しました。\n\n結果：\n<summary>`（成果物 URL があれば `\n\n成果物：\n<URL>` を足す）
+- 失敗: `ジョブ J-000123 の処理に失敗しました。\n\n原因：\n<安全に表示できるエラー概要>\n\n再実行する場合：\n/retry J-000123`
+- 文面は 1500 字以内に切る。先頭に 🧞‍♂️ は付けない（Genie が 1 通目に印だけを送るため）。先頭を 🪔 にしない。
+
+### 13.5 `GET /genie/replies`（Genie の `reply_fetch_url`）
+
+Genie の `HTTPReplySource`（Sources/GenieCore/ReplySource.swift）の形に合わせる。
+
+- 要求: `GET /genie/replies[?cursor=<文字列>]`、`Authorization: Bearer <GENIE_TOKEN>`（Genie の `reply-secret` に同じ値を入れる）。
+- 応答 200:
+  ```json
+  {"cursor":"o:42","replies":[{"id":"je-42","chat_id":21,"text":"…","in_reply_to_guid":"<元の guid>","created_at":"2026-11-11T00:00:00.000Z"}]}
+  ```
+  - `id` は `je-<outbox_id>`。outbox の行ごとに別の id なので、同じ guid に受付・完了・コマンドの返信を何通でも送れる。
+  - `chat_id` は数値（jobs.source_chat_id を整数にしたもの）。`in_reply_to_guid` は jobs.source_message_id（コマンドの返信はそのコマンドの guid）。
+  - `created_at` は outbox の作成時刻（Genie はこれが `route_ttl_seconds` より古いと送らない）。
+- 対象: `channel='genie'` かつ `status='pending'` かつ `outbox_id > cursor の数` の行を、outbox_id の昇順に `GENIE_REPLY_PAGE_LIMIT`（既定 50、1〜100）件まで。
+- `cursor` は、返した最後の行の `o:<outbox_id>`。返す行が無ければ受け取った cursor をそのまま返す（無ければ null）。形が違う cursor は 400。
+- **送信の記録（markSent）**: Genie は、ページの返事をすべて処理し終えたときだけ cursor を進める（Engine.pollReplies）。そこで、`cursor=o:N` で取りに来たら、まず `channel='genie'`、`status='pending'`、`outbox_id <= N` の行を同じトランザクションで `sent` にする（`external_ref='genie:cursor'`、event `outbox.sent`、actor `genie`）。SQLite は書き込みを 1 本ずつ通すので、N より小さい id の行が後から現れることはない。
+- 制約（正直に書く）: Genie は「処理した」と「送れた」を分けて知らせない（期限切れや送り先不明で捨てた返事も処理済みになる）。そのため `sent` は「Genie が受け取って処理した」の意味になる。送信の成否は Genie のログで見る。Genie から送信結果を返す仕組みは次の段階の候補。
+- `channel='genie'` の行は Genie だけが取る。6 章の `/outbox/claim` は `channel<>'genie'` の行だけを対象にする。Genie 経由のジョブ（Ingress で作ったもの）の outbox は `channel='genie'` にする（enqueue と complete/fail の `notify` も、ジョブの outbox の既定 channel に従う）。
+- Reconciler の staleOutbox は genie の行も報告する（Genie が止まっている兆候）。
+
+### 13.6 Worker（box の Grok Bot Routine）から Job API への経路
+
+- box の tailscaled は userspace-networking で動いていて、SOCKS や HTTP のプロキシは無い。プロキシを足すには tailscaled の再起動が要り、そのあいだ他の受信も止まるので、前提にしない。
+- そこで、Worker の HTTP クライアントは送受信の方法（Transport）を差し替えられるようにする。
+  - 標準: `tailscale nc <Mac mini のホスト名> <PORT>` を子プロセスで起動し、標準入出力で HTTP/1.1（`Connection: close`、`Content-Length`）をやりとりする。応答は `Content-Length` と `Transfer-Encoding: chunked` の両方を読める。
+  - テスト: 子プロセスの起動（spawn）を注入して偽物に差し替える。Transport ごとモックにもできる。
+- 「届かない」の扱い: 次のどれかなら `{ok:false, unreachable:true, reason}` を返し、例外を投げない。ジョブは failed にしない。
+  - `tailscale` が見つからない（ENOENT）→ `reason:"nc_not_found"`
+  - 接続できない（応答が来ないまま子プロセスが終わる）→ `reason:"connect_failed"`
+  - 時間切れ（既定 15 秒。子プロセスを止める）→ `reason:"timeout"`
+- Worker の 1 回分（`runWorkerOnce`）: claim → 処理 → complete / fail。どの段階で届かなくなっても、何も書かずに `outcome:"unreachable"` で終わる。claim 済みなら lease が切れたあと Reconciler が queued に戻し、Dispatcher が起こし直したときに再開する（at-least-once）。処理関数の例外だけを fail にする。
+- CLI（`node dist/worker-cli.js <claim|get|heartbeat|complete|fail|outbox> [JSON]`）を Routine から Shell で呼べるようにする。トークンは `JOB_API_TOKEN_FILE`（600 のファイル）から読み、引数や出力に出さない。終了コード: 0 成功、3 届かない、4 API のエラー、2 使い方の誤り。出力は JSON 1 行。
+- 設定（Worker 側）: `JOB_API_TAILNET_HOST`、`JOB_API_PORT`、`JOB_API_TOKEN_FILE`、`TAILSCALE_BIN`（既定 `tailscale`）、`JOB_API_TIMEOUT_MS`（既定 15000）。値はリポジトリに書かない。
+- 手順と理由は `docs/worker.md` に書く。実際の tailscale の設定変更や tailscaled の再起動はしない。
