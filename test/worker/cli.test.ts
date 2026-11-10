@@ -1,7 +1,12 @@
-import { mkdtempSync, writeFileSync, rmSync, chmodSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, chmodSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
+
+vi.mock('node:fs', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return { ...actual, readFileSync: vi.fn(actual.readFileSync) };
+});
 import { runWorkerCli } from '../../src/worker-cli.js';
 import type { Transport } from '../../src/worker/transport.js';
 
@@ -81,7 +86,7 @@ test('fix1-9 CLI explains bad JSON, commands, config and token failures without 
   const check = async (args: string[], settings: NodeJS.ProcessEnv, reason: string) => {
     const result = await runWorkerCli(args, settings, { transport });
     expect(result.exitCode).toBe(2);
-    expect(JSON.parse(result.output)).toEqual({ ok: false, error: 'USAGE_ERROR', reason });
+    expect(JSON.parse(result.output)).toEqual({ ok: false, error: 'USAGE_ERROR', reason, ...(reason === 'MISSING_CONFIG' ? { missing: ['JOB_API_TAILNET_HOST', 'JOB_API_TOKEN_FILE'] } : {}) });
     expect(result.output).not.toContain(file);
     expect(result.output).not.toContain(token);
   };
@@ -131,5 +136,80 @@ test('fix1-10 CLI supplies completion and failure notifications unless --no-noti
     const oversized = await runWorkerCli(['complete', JSON.stringify({ ...complete, artifact_urls: ['https://example.invalid/' + 'x'.repeat(1500)] })], env, { transport });
     expect(oversized.exitCode).toBe(2);
     expect(JSON.parse(oversized.output)).toMatchObject({ reason: 'ARTIFACT_NOTIFICATION_TOO_LONG' });
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+
+test('fix2-5 CLI validation returns only failed schema paths and missing environment names', async () => {
+  const invalid = await runWorkerCli(['complete', JSON.stringify({
+    job_id: 'private-invalid-job', result: {}, artifact_urls: ['http://example.invalid/private'],
+  })], {});
+  expect(invalid.exitCode).toBe(2);
+  expect(JSON.parse(invalid.output)).toEqual({ ok: false, error: 'USAGE_ERROR', reason: 'INVALID_ARGUMENTS', fields: ['input.job_id', 'input.claim_token', 'input.artifact_urls.0'] });
+  expect(invalid.output).not.toContain('private');
+  const missing = await runWorkerCli(['claim', '{"worker_id":"worker-a"}'], {});
+  expect(JSON.parse(missing.output)).toEqual({ ok: false, error: 'USAGE_ERROR', reason: 'MISSING_CONFIG', missing: ['JOB_API_TAILNET_HOST', 'JOB_API_TOKEN_FILE'] });
+  const invalidConfig = await runWorkerCli(['claim', '{"worker_id":"worker-a"}'], { JOB_API_TAILNET_HOST: 'dummy-host', JOB_API_TOKEN_FILE: 'dummy-path', JOB_API_PORT: 'private-invalid-port' });
+  expect(JSON.parse(invalidConfig.output)).toEqual({ ok: false, error: 'USAGE_ERROR', reason: 'INVALID_CONFIG', fields: ['JOB_API_PORT'] });
+  expect(invalidConfig.output).not.toContain('private');
+});
+test('fix2-5 CLI distinguishes token file failures without disclosing paths or contents', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'worker-cli-token-reasons-'));
+  const file = join(dir, 'private-file');
+  const secret = 'dummy-whitespace-token-'.repeat(3);
+  const env = { JOB_API_TAILNET_HOST: 'dummy-host', JOB_API_TOKEN_FILE: file };
+  const args = ['claim', '{"worker_id":"worker-a"}'];
+  const transport: Transport = { async request() { return { ok: true, status: 200, body: '{"job":null}' }; } };
+  const check = async (reason: string) => {
+    const actual = await runWorkerCli(args, env, { transport });
+    expect(actual.exitCode).toBe(2);
+    expect(JSON.parse(actual.output)).toEqual({ ok: false, error: 'USAGE_ERROR', reason });
+    expect(actual.output).not.toContain(file);
+    expect(actual.output).not.toContain(secret);
+  };
+  try {
+    await check('TOKEN_FILE_MISSING');
+    writeFileSync(file, secret, { mode: 0o600 });
+    vi.mocked(readFileSync).mockImplementationOnce(() => { throw Object.assign(new Error('private filesystem detail'), { code: 'EACCES' }); });
+    await check('TOKEN_FILE_UNREADABLE');
+    chmodSync(file, 0o644);
+    await check('TOKEN_FILE_MODE');
+    chmodSync(file, 0o600);
+    writeFileSync(file, 'short');
+    await check('TOKEN_TOO_SHORT');
+    for (const value of [secret + ' ', ' ' + secret, secret + '\n\n', secret + '\r\n', secret.slice(0, 12) + '\t' + secret.slice(12), secret.slice(0, 12) + '\n' + secret.slice(12)]) {
+      writeFileSync(file, value);
+      await check('TOKEN_HAS_WHITESPACE');
+    }
+    for (const value of [secret, secret + '\n']) {
+      writeFileSync(file, value);
+      expect((await runWorkerCli(args, env, { transport })).exitCode).toBe(0);
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test.each(['complete', 'fail'])('fix2-6 CLI %s replaces empty formatted notification with default', async verb => {
+  const dir = mkdtempSync(join(tmpdir(), 'worker-cli-empty-notify-'));
+  const file = join(dir, 'token');
+  writeFileSync(file, 'dummy-empty-notify-'.repeat(3), { mode: 0o600 });
+  const env = { JOB_API_TAILNET_HOST: 'dummy-host', JOB_API_TOKEN_FILE: file };
+  const requests: { notify: { body: string } }[] = [];
+  const transport: Transport = { async request(request) {
+    requests.push(JSON.parse(request.body ?? '{}'));
+    return { ok: true, status: 200, body: '{"job":null}' };
+  } };
+  const base = { job_id: 'J-000001', claim_token: 'dummy-claim' };
+  const input = verb === 'complete' ? { ...base, result: { summary: '保存しました' } } : { ...base, error: { code: 'PROCESSING_ERROR', message: 'private detail' } };
+  try {
+    for (const body of ['🪔', '🧞', '🪔 🧞‍♂️ 🪔', '\u200B\u200F\uFEFF']) {
+      expect((await runWorkerCli([verb, JSON.stringify({ ...input, notify: { body } })], env, { transport })).exitCode).toBe(0);
+      expect(requests.at(-1)?.notify.body).toContain(verb === 'complete' ? 'ジョブ J-000001 が完了しました。' : 'ジョブ J-000001 の処理に失敗しました。');
+      expect(requests.at(-1)?.notify.body).not.toContain('private detail');
+    }
+    if (verb === 'complete') {
+      const custom = await runWorkerCli([verb, JSON.stringify({ ...input, artifact_urls: ['https://example.invalid/' + 'x'.repeat(1500)], notify: { body: '🧞 独自本文' } })], env, { transport });
+      expect(custom.exitCode).toBe(0);
+      expect(requests.at(-1)?.notify.body).toBe('独自本文');
+    }
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

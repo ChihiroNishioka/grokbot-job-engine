@@ -6,6 +6,7 @@ import { JobApiClient } from './worker/client.js';
 import { createTailscaleNcTransport } from './worker/tailscale-nc.js';
 import type { Transport } from './worker/transport.js';
 import { ArtifactNotificationTooLong, completion, failure } from './lib/reply-text.js';
+import { replyText } from './ingress/text.js';
 
 const integer = (fallback: number, max: number) => z.string().regex(/^\d+$/).default(String(fallback)).transform(Number).pipe(z.number().int().positive().max(max));
 const configSchema = z.object({
@@ -29,9 +30,9 @@ const commands = z.discriminatedUnion('command', [
   z.object({ command: z.literal('fail'), input: z.strictObject({ ...tokenFields, error: z.strictObject({ code: z.string().regex(/^[A-Z0-9_]{1,64}$/), message: z.string().refine(value => [...value].length <= 1000) }), notify }) }),
   z.object({ command: z.literal('outbox'), input: z.strictObject({ worker_id: worker, lease_seconds: lease, outbox_id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional() }) }),
 ]);
-type UsageReason = 'ARTIFACT_NOTIFICATION_TOO_LONG' | 'INVALID_ARGUMENTS' | 'BAD_JSON' | 'UNKNOWN_COMMAND' | 'MISSING_CONFIG' | 'TOKEN_FILE_MODE' | 'TOKEN_TOO_SHORT';
+type UsageReason = 'ARTIFACT_NOTIFICATION_TOO_LONG' | 'INVALID_ARGUMENTS' | 'BAD_JSON' | 'UNKNOWN_COMMAND' | 'MISSING_CONFIG' | 'INVALID_CONFIG' | 'TOKEN_FILE_MISSING' | 'TOKEN_FILE_UNREADABLE' | 'TOKEN_FILE_MODE' | 'TOKEN_TOO_SHORT' | 'TOKEN_HAS_WHITESPACE';
 export async function runWorkerCli(argv: string[], env: NodeJS.ProcessEnv, deps: { transport?: Transport } = {}): Promise<{ exitCode: number; output: string }> {
-  const usage = (reason: UsageReason) => ({ exitCode: 2, output: JSON.stringify({ ok: false, error: 'USAGE_ERROR', reason }) + '\n' });
+  const usage = (reason: UsageReason, detail: { fields?: string[]; missing?: string[] } = {}) => ({ exitCode: 2, output: JSON.stringify({ ok: false, error: 'USAGE_ERROR', reason, ...detail }) + '\n' });
   const noNotify = argv.includes('--no-notify');
   const args = argv.filter(arg => arg !== '--no-notify');
   if (args.length < 1 || args.length > 2 || argv.length - args.length > 1) return usage('INVALID_ARGUMENTS');
@@ -41,18 +42,25 @@ export async function runWorkerCli(argv: string[], env: NodeJS.ProcessEnv, deps:
   try { input = args[1] === undefined ? {} : JSON.parse(args[1]); }
   catch { return usage('BAD_JSON'); }
   const parsedCommand = commands.safeParse({ command: args[0], input });
-  if (!parsedCommand.success) return usage('INVALID_ARGUMENTS');
+  if (!parsedCommand.success) return usage('INVALID_ARGUMENTS', { fields: [...new Set(parsedCommand.error.issues.map(issue => issue.path.join('.')))] });
   const command = parsedCommand.data;
   const parsedConfig = configSchema.safeParse(env);
-  if (!parsedConfig.success) return usage('MISSING_CONFIG');
+  if (!parsedConfig.success) {
+    const fields = [...new Set(parsedConfig.error.issues.map(issue => issue.path.join('.')))];
+    const missing = fields.filter(field => env[field] === undefined || env[field] === '');
+    return missing.length > 0 ? usage('MISSING_CONFIG', { missing }) : usage('INVALID_CONFIG', { fields });
+  }
   const config = parsedConfig.data;
   let secret: string;
   try {
     const stat = statSync(config.JOB_API_TOKEN_FILE);
     if (!stat.isFile() || (stat.mode & 0o777) !== 0o600) return usage('TOKEN_FILE_MODE');
-    secret = readFileSync(config.JOB_API_TOKEN_FILE, 'utf8').trim();
-  } catch { return usage('TOKEN_FILE_MODE'); }
-  if (secret.length < 32 || /[\r\n]/.test(secret)) return usage('TOKEN_TOO_SHORT');
+    secret = readFileSync(config.JOB_API_TOKEN_FILE, 'utf8').replace(/\n$/, '');
+  } catch (error) {
+    return usage(error instanceof Error && 'code' in error && error.code === 'ENOENT' ? 'TOKEN_FILE_MISSING' : 'TOKEN_FILE_UNREADABLE');
+  }
+  if (/\s/.test(secret)) return usage('TOKEN_HAS_WHITESPACE');
+  if (secret.length < 32) return usage('TOKEN_TOO_SHORT');
   const client = new JobApiClient(deps.transport ?? createTailscaleNcTransport({ host: config.JOB_API_TAILNET_HOST, port: config.JOB_API_PORT, binary: config.TAILSCALE_BIN, timeoutMs: config.JOB_API_TIMEOUT_MS }), secret);
   try {
     let result;
@@ -63,13 +71,13 @@ export async function runWorkerCli(argv: string[], env: NodeJS.ProcessEnv, deps:
       case 'complete': {
         const { job_id, notify: providedNotify, ...input } = command.input;
         const summary = typeof input.result.summary === 'string' ? input.result.summary : '結果を保存しました。';
-        const notification = noNotify ? {} : { notify: providedNotify ?? { body: completion(job_id, summary, input.artifact_urls) } };
+        const notification = noNotify ? {} : { notify: { body: replyText(providedNotify?.body ?? '') || completion(job_id, summary, input.artifact_urls) } };
         result = await client.complete(job_id, { ...input, ...notification });
         break;
       }
       case 'fail': {
         const { job_id, notify: providedNotify, ...input } = command.input;
-        const notification = noNotify ? {} : { notify: providedNotify ?? { body: failure(job_id, input.error.code) } };
+        const notification = noNotify ? {} : { notify: { body: replyText(providedNotify?.body ?? '') || failure(job_id, input.error.code) } };
         result = await client.fail(job_id, { ...input, ...notification });
         break;
       }

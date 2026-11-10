@@ -43,12 +43,14 @@ test('fix5 processor exception is masked in storage and never echoed to user', a
   expect(JSON.stringify(notification)).toContain('処理中にエラーが起きました');
 });
 
-test('fix8 documentation states dispatcher wiring and unverified live delivery', () => {
+test('fix8 documentation links centralized implementation and verification status', () => {
   for (const path of ['README.md', 'docs/worker.md', 'docs/genie.md']) {
     const text = readFileSync(path, 'utf8');
-    expect(text, path).toContain('main.ts は Dispatcher を起動しません');
-    expect(text, path).toContain('実機で未確認');
+    expect(text, path).toContain('status.md');
   }
+  const status = readFileSync('docs/status.md', 'utf8');
+  expect(status).toContain('main.ts は Dispatcher を起動しません');
+  expect(status).toContain('実機で未確認');
 });
 
 test('fix14 processor gets job claimToken and heartbeat cancellation', async () => {

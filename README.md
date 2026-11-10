@@ -1,12 +1,12 @@
 # grokbot-job-engine
 
-main.ts は Dispatcher を起動しません。Phase 1 は Worker を起こす仕組みが無いため、Worker は手動または外部から呼び出す必要があります。`tailscale nc` と Genie との実配送は実機で未確認です。
-
 iMessage から受け付ける仕事をジョブとして保存し、Worker への受け渡し、状態、結果、通知予定を管理する Job Engine です。
 
 SQLite の Job Store、Genie の webhook を受ける Ingress、Genie が取りに来る返信、Worker 用 Job API を提供します。Worker は Transport を差し替えられ、box からは `tailscale nc` 経由でアクセスします。Dispatcher は Worker を起こす合図の契約とモックを提供します。
 
 iMessage の受信・送信は Mac mini の Genie が担当します。処理関数の業務実装、MCP、Scheduler、Mac への導入、launchd、Tailscale の設定、バックアップは含みません。
+
+実装済みと未確認の範囲は [動作確認の状況](docs/status.md) を参照してください。
 
 ## 起動する
 
@@ -44,7 +44,17 @@ GENIE_REPLY_PAGE_LIMIT=50
 npm run dev
 ```
 
-Genie の `reply_fetch_url` は `http://127.0.0.1:3321/genie/replies` に設定します。`reply-secret` には `GENIE_TOKEN` と同じ値を保存します。webhook の宛先は `http://127.0.0.1:3321/ingress/genie` です。現状の Genie は HTTPS URL に制限されているため、webhook と返信取得に loopback HTTP を許可する Genie 側の変更が必要です。[Genie との契約](docs/genie.md) を参照してください。
+Genie 側は genie-in-messages の別 PR、ブランチ `feat/job-engine-route` が前提です。この PR で `job_webhook_url`、`job_chat_ids`、`job-secret`、loopback の http 許可、Notion と並べた返信取得が入ります。PR がマージされるまでは今の Genie では使えません。
+
+Genie の設定例は次のとおりです。chat_id のプレースホルダーは Mac mini 上で自分の値に置き換えます。
+
+```yaml
+job_webhook_url: http://127.0.0.1:3321/ingress/genie
+job_chat_ids: [<自分宛てトークの chat_id>]
+reply_fetch_url: http://127.0.0.1:3321/genie/replies
+```
+
+`job-secret` と `reply-secret` には `GENIE_TOKEN` と同じ値を保存し、両ファイルの権限を `0600` にします。通常の `webhook_url` と Notion の設定は今のままです。[Genie との契約](docs/genie.md) を参照してください。
 
 box の Worker からの呼び方、CLI、接続できない場合の回復は [Worker の手順](docs/worker.md) を参照してください。
 

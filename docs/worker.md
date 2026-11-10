@@ -1,6 +1,6 @@
 # box から Worker を動かす
 
-main.ts は Dispatcher を起動しません。Phase 1 は Worker を起こす仕組みが無いため、Worker は手動または外部から呼び出す必要があります。`tailscale nc` と Genie との実配送は実機で未確認です。
+実装済みと未確認の範囲は [動作確認の状況](status.md) を参照してください。
 
 Worker は Mac mini の Job API を Tailscale 経由で呼びます。Job API の待ち受けは Mac mini の tailnet 上の自分のアドレスに設定します。Funnel には公開しません。
 
@@ -16,10 +16,29 @@ box の tailscaled は userspace-networking で動作し、SOCKS と HTTP のプ
 
 1. `claim` で 1 件を取得します。ジョブが無ければ `outcome: "idle"` で終了します。
 2. 処理関数 `process({job, claimToken, heartbeat})` にジョブ、claim token、`heartbeat(): Promise<boolean>` を渡します。長い処理は lease 内に heartbeat を呼び、戻り値の `cancel_requested` を確認します。
-3. 処理関数が返す `{result, artifact_urls?, notify?}` を `complete` に送ります。`notify` が無ければ、文字列の `result.summary`（それ以外は「結果を保存しました。」）と成果物 URL から仕様 13.4 の完了文を作ります。
-4. 処理関数の例外だけを `fail` に送ります。例外の message はマスクして error に保存し、ユーザーには error.code に対応する固定の原因文を送ります。cancelled に遷移した場合はキャンセル文だけを送ります。
+3. 処理関数が成功として返す `{ok?:true, result, artifact_urls?, notify?}` を `complete` に送ります。`notify` が無ければ、文字列の `result.summary`（それ以外は「結果を保存しました。」）と成果物 URL から仕様 13.4 の完了文を作ります。
+4. 処理関数が `{ok:false, code, message?, notify?}` を返した場合、または例外を投げた場合は `fail` に送ります。`code` は下表の固定コードから選べます。例外には `PROCESSING_ERROR` を使います。cancelled に遷移した場合はキャンセル文だけを送ります。
 
 claim、heartbeat、complete、fail のいずれかが届かなければ `outcome: "unreachable"` で終了します。通信障害を理由に追加の fail は送りません。API のエラーは `outcome: "api_error"` です。claim 済みなら lease が切れた後に Reconciler が queued に戻し、Dispatcher を配線した後は、その起動で再実行できます。試行上限とキャンセル要求の扱いは通常の Reconciler と同じです。処理は at-least-once なので、外部への副作用はジョブ ID などで重複を防いでください。
+
+## 利用者に伝える失敗原因
+
+`fail` の `error.code` は次の日本語の原因文に対応します。`runWorkerOnce` の `process` からも、失敗結果の `code` で同じ原因を選べます。
+
+| 固定コード | 日本語の原因文 |
+|---|---|
+| `TIMEOUT` | 処理が時間切れになりました |
+| `SOURCE_UNAVAILABLE` | 参照先を利用できません |
+| `INVALID_REQUEST` | 依頼の内容を確認してください |
+| `PERMISSION_REQUIRED` | 処理に必要な権限がありません |
+| `PROCESSING_ERROR` | 処理中にエラーが起きました |
+| `LEASE_EXPIRED_MAX_ATTEMPTS` | 実行期限切れが再試行の上限に達しました |
+
+API に未知の `error.code` を送ると「処理中にエラーが起きました」になります。`error.message` は通知に出さず、マスクして保存するだけです。`process` の失敗結果の `message` と例外の message も同じ扱いです。独自の利用者向け文面が必要なら `notify.body` を指定します。
+
+```ts
+process: async () => ({ok:false, code:'SOURCE_UNAVAILABLE'})
+```
 
 ## 設定する
 
@@ -33,7 +52,7 @@ claim、heartbeat、complete、fail のいずれかが届かなければ `outcom
 | `TAILSCALE_BIN` | tailscale コマンドの名前またはパス | `tailscale` |
 | `JOB_API_TIMEOUT_MS` | 1 要求の時間制限。1〜2^31−1 ミリ秒 | 15000 |
 
-`JOB_API_TOKEN_FILE` の中身は Mac mini の `JOB_API_TOKEN` と合わせます。32 字以上にし、末尾の改行以外に改行を入れません。トークンを引数や出力に載せません。ホスト名、トークン、ファイルの実際のパスはリポジトリに保存しないでください。
+`JOB_API_TOKEN_FILE` の中身は Mac mini の `JOB_API_TOKEN` と合わせます。32 字以上にします。末尾の LF 改行 1 つだけは取り除いて許可し、それ以外の空白・改行・タブは拒否します。トークンを引数や出力に載せません。ホスト名、トークン、ファイルの実際のパスはリポジトリに保存しないでください。
 
 ```sh
 export JOB_API_TAILNET_HOST='<Mac mini のホスト名>'
@@ -51,7 +70,7 @@ node dist/worker-cli.js claim '{"worker_id":"routine-worker","lease_seconds":300
 node dist/worker-cli.js get '{"job_id":"J-000123"}'
 node dist/worker-cli.js heartbeat '{"job_id":"J-000123","claim_token":"<claim が返した値>"}'
 node dist/worker-cli.js complete '{"job_id":"J-000123","claim_token":"<claim が返した値>","result":{"summary":"完了しました"}}'
-node dist/worker-cli.js fail '{"job_id":"J-000123","claim_token":"<claim が返した値>","error":{"code":"PROCESSING_ERROR","message":"安全なエラー概要"}}'
+node dist/worker-cli.js fail '{"job_id":"J-000123","claim_token":"<claim が返した値>","error":{"code":"PROCESSING_ERROR","message":"保存用の診断情報"}}'
 node dist/worker-cli.js outbox '{"worker_id":"routine-worker"}'
 ```
 
@@ -68,7 +87,22 @@ claim の結果には `claim_token` が含まれます。heartbeat、complete、
 
 `timeout` は子プロセスを停止します。応答が無いまま終了した場合と、不完全または読めない HTTP の応答は `connect_failed` とします。受信データは 16 MiB までです。送信成功後に応答を失う場合もあるため、通信障害を処理失敗として扱わず、lease と冪等性で回復します。
 
-使い方の誤りは `error:"USAGE_ERROR"` と `reason` を返します。理由コードは `BAD_JSON`、`UNKNOWN_COMMAND`、`MISSING_CONFIG`、`TOKEN_FILE_MODE`、`TOKEN_TOO_SHORT`、`INVALID_ARGUMENTS` です。API の 4xx は code と message を保持します。トークンやファイル内容は出力しません。
+使い方の誤りは `error:"USAGE_ERROR"` と `reason` を返します。
+
+| 理由コード | 内容 |
+|---|---|
+| `BAD_JSON` | JSON を読めない |
+| `UNKNOWN_COMMAND` | コマンドが存在しない |
+| `INVALID_ARGUMENTS` | 引数が不正。入力の検証失敗は zod の失敗した項目名だけを `fields` に入れる |
+| `MISSING_CONFIG` | 必須の設定が不足。欠けた環境変数名だけを `missing` に入れる |
+| `INVALID_CONFIG` | 設定が不正。環境変数名だけを `fields` に入れる |
+| `TOKEN_FILE_MISSING` | トークンファイルが無い |
+| `TOKEN_FILE_UNREADABLE` | トークンファイルを読めない |
+| `TOKEN_FILE_MODE` | 通常ファイルでない、または権限が 0600 でない |
+| `TOKEN_TOO_SHORT` | トークンが 32 字未満 |
+| `TOKEN_HAS_WHITESPACE` | 許可する末尾 LF 1 つを除き、空白・改行・タブがある |
+
+API の 4xx は code と message を保持します。設定値、トークン、トークンファイルのパスや内容は出力しません。
 
 通知キーは `job:<job_id>:<kind>:<attempt>` です。同じ試行の再送は冪等で、retry 後の通知は別の行になります。Genie 経由のジョブが lease 切れで failed / cancelled になる場合も Reconciler が同じトランザクションで通知を作ります。
 

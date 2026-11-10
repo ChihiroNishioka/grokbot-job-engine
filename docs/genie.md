@@ -1,8 +1,22 @@
 # Genie との契約
 
-main.ts は Dispatcher を起動しません。Phase 1 は Worker を起こす仕組みが無いため、Worker は手動または外部から呼び出す必要があります。`tailscale nc` と Genie との実配送は実機で未確認です。
+実装済みと未確認の範囲は [動作確認の状況](status.md) を参照してください。
 
 Job Engine は Mac mini 上で Genie 用の Ingress と Worker 用の Job API を別々に待ち受ける。Ingress は loopback だけに公開し、Genie 専用の `GENIE_TOKEN` で認証する。Job API のトークンは使えない。設定手順は [README](../README.md)、Worker の経路は [worker.md](worker.md) を参照する。
+
+## Genie 側を設定する
+
+Genie 側は genie-in-messages の別 PR、ブランチ `feat/job-engine-route` が前提です。この PR で `job_webhook_url`、`job_chat_ids`、`job-secret`、loopback の http 許可、Notion と並べた返信取得が入ります。PR がマージされるまでは今の Genie では使えません。
+
+Genie の設定例は次のとおりです。chat_id のプレースホルダーは Mac mini 上で自分の値に置き換えます。
+
+```yaml
+job_webhook_url: http://127.0.0.1:3321/ingress/genie
+job_chat_ids: [<自分宛てトークの chat_id>]
+reply_fetch_url: http://127.0.0.1:3321/genie/replies
+```
+
+`job-secret` と `reply-secret` には `GENIE_TOKEN` と同じ値を保存し、両ファイルの権限を `0600` にします。通常の `webhook_url` と Notion の設定は今のままです。ジョブ専用の webhook と返信取得を追加します。
 
 ## Webhook の受け付け
 
@@ -53,7 +67,7 @@ Job Engine は Mac mini 上で Genie 用の Ingress と Worker 用の Job API �
 
 ## 返信取得と cursor
 
-Genie の `reply_fetch_url` は `http://127.0.0.1:3321/genie/replies` にする。`reply-secret` に `GENIE_TOKEN` と同じ値を設定する。現在の Genie は URL を HTTPS に制限しているため、webhook と返信取得の loopback HTTP を認める変更が Genie 側に必要。Job Engine から Genie のソースは変更しない。
+上記の別 PR を適用した Genie は、`reply_fetch_url` から Notion と並べてジョブの返信を取得する。認証は `reply-secret` を使う。
 
 ```http
 GET /genie/replies?cursor=o:42

@@ -39,13 +39,20 @@ const schema = z.object({
   OUTBOX_STALE_SECONDS: integer(900, 1, 604800),
   RECONCILE_INTERVAL_SECONDS: integer(60, 0, 86400),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
-}).refine(config => config.LEASE_SECONDS_DEFAULT <= config.LEASE_SECONDS_MAX)
-  .refine(config => config.GENIE_TOKEN !== config.JOB_API_TOKEN)
-  .refine(config => config.GENIE_ALLOWED_CHAT_IDS.every(id => config.ALLOWED_SOURCE_CHAT_IDS.includes(String(id))));
+}).refine(config => config.LEASE_SECONDS_DEFAULT <= config.LEASE_SECONDS_MAX, { path: ['LEASE_SECONDS_DEFAULT'] })
+  .refine(config => config.GENIE_TOKEN !== config.JOB_API_TOKEN, { path: ['GENIE_TOKEN'] })
+  .refine(config => config.GENIE_ALLOWED_CHAT_IDS.every(id => config.ALLOWED_SOURCE_CHAT_IDS.includes(String(id))), { path: ['GENIE_ALLOWED_CHAT_IDS'] });
 
 export type Config = z.infer<typeof schema>;
+export class ConfigError extends Error {
+  constructor(readonly fields: string[]) { super('設定が正しくありません'); }
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
   const parsed = schema.safeParse(env);
-  if (!parsed.success) throw new Error('設定が正しくありません');
+  if (!parsed.success) throw new ConfigError([...new Set(parsed.error.issues.flatMap(issue => {
+    const field = issue.path[0];
+    return typeof field === 'string' && field in schema.shape ? [field] : [];
+  }))].sort());
   return parsed.data;
 }

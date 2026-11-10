@@ -41,7 +41,9 @@ function executeCommand(deps:AppDeps,chat:number,text:string):{command:Command;j
   return {command:parsed.command,job_id:job.job_id,text:`${action}ジョブID：${job.job_id}\n状態：${statusText[job.status]}\n試行回数：${job.attempts}\nキャンセル要求：${job.cancel_requested?'あり':'なし'}`};
  }catch(error){
   if(!(error instanceof StoreError))throw error;
-  const message=error.code==='MAX_ATTEMPTS_REACHED'?'再実行の上限に達しています。':'この状態では実行できません。';
+  const states={queued:'実行待ち',claimed:'実行中',done:'完了済み',failed:'失敗',cancelled:'キャンセル済み'};
+  const reason=error.code==='MAX_ATTEMPTS_REACHED'?'再実行の上限に達しています。':parsed.command==='cancel'?'キャンセルできません。':job.status==='queued'||job.status==='claimed'?'再実行は不要です。':'再実行できません。失敗したジョブだけが対象です。';
+  const message=`ジョブ ${job.job_id} は${states[job.status]}のため、${reason}`;
   return {command:parsed.command,job_id:job.job_id,text:message};
  }
 }
