@@ -4,7 +4,7 @@ import { expect, test } from 'vitest';
 test('fix2 docs Genie setup names the prerequisite PR and dedicated job settings', () => {
   for (const path of ['README.md', 'docs/genie.md']) {
     const text = readFileSync(path, 'utf8');
-    for (const required of ['genie-in-messages', 'feat/job-engine-route', 'マージされるまでは', 'job_webhook_url: http://127.0.0.1:3321/ingress/genie', 'job_chat_ids: [<自分宛てトークの chat_id>]', 'reply_fetch_url: http://127.0.0.1:3321/genie/replies', 'job-secret', 'reply-secret', 'GENIE_TOKEN', '0600', 'Notion', 'webhook_url']) {
+    for (const required of ['genie-in-messages', 'feat/job-engine-route', 'マージされるまでは', '"job_webhook_url": "http://127.0.0.1:3321/ingress/genie"', '"job_chat_ids": [7]', '"reply_fetch_url": "http://127.0.0.1:3321/genie/replies"', 'GENIE_ALLOWED_CHAT_IDS', 'webhook_http_403', 'job-secret', 'reply-secret', 'GENIE_TOKEN', '0600', 'Notion', 'webhook_url']) {
       expect(text, `${path} requires ${required}`).toContain(required);
     }
   }
