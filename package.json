@@ -32,7 +32,7 @@
     "vitest": "^5.1.0"
   },
   "allowScripts": {
-    "better-sqlite3@13.0.3": true,
-    "esbuild@0.28.2": true
+    "esbuild@0.28.2": true,
+    "better-sqlite3": false
   }
 }
