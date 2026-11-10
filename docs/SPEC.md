@@ -369,7 +369,7 @@ interface WakeDispatcher { wake(): Promise<WakeResult> }
 
 ## 11. 元の指示との違い
 
-### ちひろの決定（11/11 02:55）によるもの
+### オーナーの決定（11/11 02:55）によるもの
 
 | 決定 | 反映 |
 |---|---|
@@ -412,7 +412,7 @@ interface WakeDispatcher { wake(): Promise<WakeResult> }
 13. **設定の範囲**：PORT 1〜65535、LEASE_SECONDS_DEFAULT 10〜LEASE_SECONDS_MAX、LEASE_SECONDS_MAX 10〜86400、JOB_MAX_ATTEMPTS_DEFAULT 1〜10、REQUEST_TEXT_MAX_CHARS 1〜100000、RESULT_MAX_CHARS 1〜1000000、BODY_MAX_BYTES 1024〜10485760、RATE_LIMIT_PER_MINUTE 1〜100000、OUTBOX_LEASE_SECONDS 10〜3600、OUTBOX_MAX_ATTEMPTS 1〜20、QUEUED_STALE_SECONDS / OUTBOX_STALE_SECONDS 1〜604800、RECONCILE_INTERVAL_SECONDS 0〜86400。範囲外は起動しない（値はメッセージに出さない）。
 14. **scheduled_at**：`Z` か `±hh:mm` の付いた ISO 8601 だけを受け付け、UTC のミリ秒にして保存する。オフセットの無いものは 400。
 
-## 13. 方針変更（ちひろ、11/11 03:11）：入口と出口は Mac mini の Genie
+## 13. 方針変更（オーナー、11/11 03:11）：入口と出口は Mac mini の Genie
 
 11 章の「入口と出口は Grok Bot 組み込みの Messages 機能」は取り消す。Routine の実行中には組み込みの Messages ツールが渡らないと分かったため。入口と出口は Mac mini の Genie（genie-in-messages）にする。受け付けるのは自分宛てのトークだけ。この章は 1〜12 章より優先する。
 
