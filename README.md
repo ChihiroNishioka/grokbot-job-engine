@@ -2,9 +2,9 @@
 
 iMessage から受け付ける仕事をジョブとして保存し、Worker への受け渡し、状態、結果、通知予定を管理する Job Engine です。
 
-Phase 1 は SQLite の Job Store、Hono の HTTP API、期限切れの回収と滞留検出、通知予定の outbox、認証、入力検証、ログのマスキングを扱います。Dispatcher は Worker を起こす合図の契約とモックを提供します。webhook 実装は fetch を注入したテスト用です。
+SQLite の Job Store、Genie の webhook を受ける Ingress、Genie が取りに来る返信、Worker 用 Job API を提供します。Worker は Transport を差し替えられ、box からは `tailscale nc` 経由でアクセスします。Dispatcher は Worker を起こす合図の契約とモックを提供します。
 
-iMessage の受信・送信、Worker 本体、MCP、管理コマンドの解釈、Scheduler、Mac への導入、launchd、Tailscale の設定、バックアップは範囲外です。実際の webhook 送信も行いません。
+iMessage の受信・送信は Mac mini の Genie が担当します。処理関数の業務実装、MCP、Scheduler、Mac への導入、launchd、Tailscale の設定、バックアップは含みません。
 
 ## 起動する
 
@@ -15,13 +15,36 @@ npm ci
 cp .env.example .env
 ```
 
-`.env` の `JOB_API_TOKEN` を32文字以上のランダムな値に変更します。`ALLOWED_SOURCE_CHAT_IDS` には許可するトークの ID をカンマ区切りで設定します。例の値はダミーです。実際の秘密と個人情報は Git 管理外の `.env` だけに保存します。設定の一覧と範囲は [仕様9章と12章](docs/SPEC.md) を参照してください。
+`.env` の `JOB_API_TOKEN` と `GENIE_TOKEN` を別々の32文字以上のランダムな値に変更します。`GENIE_ALLOWED_CHAT_IDS` には自分宛てトークの整数 ID をカンマ区切りで設定します。`ALLOWED_SOURCE_CHAT_IDS` にも同じ ID を入れます。例の値はダミーです。実際の秘密と個人情報は Git 管理外の `.env` だけに保存します。[仕様13章](docs/SPEC.md) が1〜12章に優先します。
+
+待ち受けは2つです。
+
+| 用途 | HOST | PORT | 認証 |
+|---|---|---|---|
+| Genie の Ingress と返信取得 | `GENIE_HOST=127.0.0.1` | `GENIE_PORT=3321` | `GENIE_TOKEN` |
+| Worker の Job API | `HOST=127.0.0.1` はローカル用の例 | `PORT=3320` | `JOB_API_TOKEN` |
+
+Mac mini では `HOST` に tailnet 上の自分のアドレスを書きます。`.env.example` の `HOST` は `127.0.0.1` のままです。`0.0.0.0` と `::` は拒否します。Genie 用は loopback のみです。どちらも Funnel には出しません。
+
+```dotenv
+HOST=127.0.0.1
+PORT=3320
+GENIE_HOST=127.0.0.1
+GENIE_PORT=3321
+GENIE_ALLOWED_CHAT_IDS=21
+ALLOWED_SOURCE_CHAT_IDS=21
+GENIE_REPLY_PAGE_LIMIT=50
+```
+
+この例の `21` はダミーです。Mac mini 上の `.env` でだけ実際の値に置き換えます。
 
 ```sh
 npm run dev
 ```
 
-既定の待ち受けは `127.0.0.1:3320` です。Tailscale の中だけで使ってください。公開インターネットへ公開する設定は含みません。
+Genie の `reply_fetch_url` は `http://127.0.0.1:3321/genie/replies` に設定します。`reply-secret` には `GENIE_TOKEN` と同じ値を保存します。webhook の宛先は `http://127.0.0.1:3321/ingress/genie` です。現状の Genie は HTTPS URL に制限されているため、webhook と返信取得に loopback HTTP を許可する Genie 側の変更が必要です。[Genie との契約](docs/genie.md) を参照してください。
+
+box の Worker からの呼び方、CLI、接続できない場合の回復は [Worker の手順](docs/worker.md) を参照してください。
 
 ビルド済みコードを動かす場合は次を実行します。
 
@@ -32,7 +55,7 @@ npm start
 
 ## API を使う
 
-`GET /healthz` 以外は Bearer 認証が必要です。入力と応答の詳細は [仕様6章](docs/SPEC.md) を参照してください。補足の12章を優先します。
+`GET /healthz` 以外は Bearer 認証が必要です。入力と応答の詳細は [仕様6章](docs/SPEC.md) を参照してください。変更された入口・出口と経路は13章を優先します。Job API のルートは Ingress では公開しません。
 
 | メソッド | パス | 操作 |
 |---|---|---|
@@ -62,6 +85,7 @@ npm run lint
 npm run typecheck
 npm test
 npm run check:secrets
+npm run build
 ```
 
 テストは HTTP サーバーを起動せず、`app.request()` と一時 DB を使います。時刻は FakeClock で進め、並行書き込みは worker_threads と Atomics で確認します。受け入れ条件は [GREEN.md](docs/GREEN.md) にあります。

@@ -7,7 +7,7 @@ import { OutboxStore } from '../../src/store/outbox.js';
 
 const data = z.object({ filename: z.string(), operation: z.enum(['create', 'claim', 'outbox']), barrier: z.instanceof(SharedArrayBuffer), jobId: z.string().optional(), outboxId: z.number().optional(), index: z.number() }).parse(workerData);
 const db = openDb(data.filename);
-const config = loadConfig({ JOB_API_TOKEN: 'dummy-'.repeat(8), ALLOWED_SOURCE_CHAT_IDS: 'chat-a' });
+const config = loadConfig({ JOB_API_TOKEN: 'dummy-'.repeat(8), ALLOWED_SOURCE_CHAT_IDS: 'chat-a,21', GENIE_TOKEN: 'dummy-genie-'.repeat(4), GENIE_ALLOWED_CHAT_IDS: '21' });
 const deps = { db, config, clock: { now: () => Date.parse('2026-11-11T00:00:00.000Z') } };
 const barrier = new Int32Array(data.barrier);
 parentPort?.postMessage({ ready: true });

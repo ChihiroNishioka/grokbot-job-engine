@@ -1,0 +1,4 @@
+import {it,expect} from 'vitest';
+import {JobStore} from '../../src/store/jobs.js';
+import {setup,payload,created,page} from '../ingress/helpers.js';
+it('G70 acceptance, claim, complete and fetch return separate ack and done ids',async()=>{const c=setup();try{const id=created.parse((await c.request('/ingress/genie',payload())).body).job_id;const store=new JobStore(c);const claim=store.claim({worker_id:'dummy-worker'},id);if(!claim.job)throw Error('missing claim');store.complete(id,{claim_token:claim.claim_token,result:{summary:'完了'},notify:{body:'完了しました'}});const replies=page.parse((await c.request('/genie/replies')).body).replies;expect(replies).toHaveLength(2);expect(new Set(replies.map(r=>r.id)).size).toBe(2);expect(replies.map(r=>r.in_reply_to_guid)).toEqual(['guid-a','guid-a']);expect(replies[1]?.text).toBe('完了しました');}finally{c.close();}});

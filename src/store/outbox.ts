@@ -22,7 +22,8 @@ export class OutboxStore {
       const job=db.prepare<[string],{source_chat_id:string;source_message_id:string}>('SELECT source_chat_id,source_message_id FROM jobs WHERE job_id=?').get(input.job_id);
       if(!job)throw new StoreError('JOB_NOT_FOUND');
       const now=clock.now();
-      const inserted=db.prepare("INSERT INTO delivery_outbox(job_id,idempotency_key,kind,target_chat_id,in_reply_to,body,status,created_at,updated_at) VALUES (?,?,?,?,?,?,'pending',?,?)").run(input.job_id,input.idempotency_key,input.kind,job.source_chat_id,job.source_message_id,input.body,now,now);
+      const channel=db.prepare<[string],{channel:string}>("SELECT 'genie' AS channel FROM ingress_messages WHERE job_id=? AND kind='job' LIMIT 1").get(input.job_id)?.channel??'imessage';
+      const inserted=db.prepare("INSERT INTO delivery_outbox(job_id,idempotency_key,kind,channel,target_chat_id,in_reply_to,body,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'pending',?,?)").run(input.job_id,input.idempotency_key,input.kind,channel,job.source_chat_id,job.source_message_id,input.body,now,now);
       const id=Number(inserted.lastInsertRowid);
       writeEvent(db,{job_id:input.job_id,outbox_id:id,at:now,actor:'api',type:'outbox.enqueued',to_status:'pending'});
       return {outbox:this.get(id),created:true};
@@ -33,8 +34,8 @@ export class OutboxStore {
     return db.transaction(()=>{
       const now=clock.now();const token=this.deps.ids?.token?.()??randomToken();
       const expires=now+(input.lease_seconds??config.OUTBOX_LEASE_SECONDS)*1000;
-      const selector=input.outbox_id!==undefined?'?':"(SELECT outbox_id FROM delivery_outbox WHERE status='pending' ORDER BY created_at,outbox_id LIMIT 1)";
-      const changed=db.prepare(`UPDATE delivery_outbox SET status='sending',attempts=attempts+1,claimed_by=?,claim_token=?,lease_expires_at=?,updated_at=? WHERE outbox_id=${selector} AND status='pending'`).run(input.worker_id,token,expires,now,...(input.outbox_id!==undefined?[input.outbox_id]:[])).changes;
+      const selector=input.outbox_id!==undefined?'?':"(SELECT outbox_id FROM delivery_outbox WHERE status='pending' AND channel<>'genie' ORDER BY created_at,outbox_id LIMIT 1)";
+      const changed=db.prepare(`UPDATE delivery_outbox SET status='sending',attempts=attempts+1,claimed_by=?,claim_token=?,lease_expires_at=?,updated_at=? WHERE outbox_id=${selector} AND status='pending' AND channel<>'genie'`).run(input.worker_id,token,expires,now,...(input.outbox_id!==undefined?[input.outbox_id]:[])).changes;
       if(changed!==1){if(input.outbox_id!==undefined){this.get(input.outbox_id);throw new StoreError('OUTBOX_NOT_CLAIMABLE');}return {outbox:null};}
       const row=db.prepare<[string],Outbox>('SELECT * FROM delivery_outbox WHERE claim_token=?').get(token);
       if(!row)throw new Error('Missing claimed outbox');

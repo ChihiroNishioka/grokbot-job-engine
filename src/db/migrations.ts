@@ -1,9 +1,9 @@
 import type Database from 'better-sqlite3';
 
-export function migrate(db: Database.Database): void {
+function migrateV1(db: Database.Database): void {
   db.transaction(() => {
     const version = db.pragma('user_version', { simple: true });
-    if (version === 1) return;
+    if (version === 1 || version === 2) return;
     if (version !== 0) throw new Error('Unsupported database version');
     db.exec(`
 CREATE TABLE id_counters (name TEXT PRIMARY KEY, value INTEGER NOT NULL);
@@ -105,4 +105,50 @@ CREATE INDEX outbox_lease_idx  ON delivery_outbox(status, lease_expires_at);
     PRAGMA user_version=1;
     `);
   }).immediate();
+}
+
+
+export function migrate(db: Database.Database): void {
+  const version = db.pragma('user_version', { simple: true });
+  if (version === 2) return;
+  if (version !== 0 && version !== 1) throw new Error('Unsupported database version');
+  if (version === 0) migrateV1(db);
+  const foreignKeys = db.pragma('foreign_keys', { simple: true });
+  db.pragma('foreign_keys=OFF');
+  try {
+    db.transaction(() => {
+      if (db.pragma('user_version', { simple: true }) === 2) return;
+      const sequence = db.prepare<[], {seq:number}>("SELECT seq FROM sqlite_sequence WHERE name='delivery_outbox'").get()?.seq ?? 0;
+      const eventsSequence = db.prepare<[], {seq:number}>("SELECT seq FROM sqlite_sequence WHERE name='job_events'").get()?.seq ?? 0;
+      for (const table of ['delivery_outbox', 'job_events']) {
+        const original = db.prepare<[string], {sql:string}>("SELECT sql FROM sqlite_master WHERE type='table' AND name=?").get(table);
+        if (!original) throw new Error('Missing migration table');
+        const indexes = db.prepare<[string], {sql:string}>("SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name=? AND sql IS NOT NULL").all(table);
+        let sql = original.sql.replace(`CREATE TABLE ${table}`, `CREATE TABLE ${table}_v2`)
+          .replace(/job_id(\s+)TEXT NOT NULL REFERENCES/, 'job_id$1TEXT REFERENCES');
+        if (table === 'delivery_outbox') sql = sql.replace("'cancelled'))", "'cancelled','command'))").replace("channel IN ('imessage')", "channel IN ('imessage','genie')");
+        db.exec(sql);
+        db.exec(`INSERT INTO ${table}_v2 SELECT * FROM ${table}; DROP TABLE ${table}; ALTER TABLE ${table}_v2 RENAME TO ${table};`);
+        for (const index of indexes) db.exec(index.sql);
+      }
+      db.prepare("UPDATE sqlite_sequence SET seq=max(seq,?) WHERE name='delivery_outbox'").run(sequence);
+      db.prepare("UPDATE sqlite_sequence SET seq=max(seq,?) WHERE name='job_events'").run(eventsSequence);
+      db.exec(`CREATE TABLE ingress_messages (
+        guid TEXT PRIMARY KEY,
+        chat_id INTEGER NOT NULL,
+        kind TEXT NOT NULL CHECK(kind IN ('job','command','ignored')),
+        job_id TEXT REFERENCES jobs(job_id),
+        outbox_id INTEGER REFERENCES delivery_outbox(outbox_id),
+        received_at INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        command TEXT
+      );
+      CREATE INDEX ingress_job_idx ON ingress_messages(job_id,kind);
+      PRAGMA user_version=2;`);
+      const violations = db.pragma('foreign_key_check');
+      if (!Array.isArray(violations) || violations.length) throw new Error('Migration foreign key check failed');
+    }).immediate();
+  } finally {
+    db.pragma(`foreign_keys=${foreignKeys === 1 ? 'ON' : 'OFF'}`);
+  }
 }

@@ -13,7 +13,7 @@ export class FakeClock {
   advance(ms: number) { this.time += ms; }
 }
 export const token = 'dummy-test-token-'.repeat(3);
-export const validEnv = { JOB_API_TOKEN: token, ALLOWED_SOURCE_CHAT_IDS: 'chat-a,chat-b', RATE_LIMIT_PER_MINUTE: '10000' };
+export const validEnv = { JOB_API_TOKEN: token, RATE_LIMIT_PER_MINUTE: '10000', GENIE_TOKEN: 'dummy-genie-token-'.repeat(3), GENIE_ALLOWED_CHAT_IDS: '21', ALLOWED_SOURCE_CHAT_IDS: 'chat-a,chat-b,21' };
 export function input(overrides: Record<string, unknown> = {}) {
   return { source: 'imessage', source_message_id: 'message-a', source_chat_id: 'chat-a', requester_id: 'requester-a', request_text: 'request-marker', ...overrides };
 }

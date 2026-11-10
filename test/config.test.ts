@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { loadConfig } from '../src/config/index.js';
 
-const valid = () => ({ JOB_API_TOKEN: 'dummy-'.repeat(8), ALLOWED_SOURCE_CHAT_IDS: 'chat-a,chat-b' });
+const valid = () => ({ JOB_API_TOKEN: 'dummy-'.repeat(8), ALLOWED_SOURCE_CHAT_IDS: 'chat-a,chat-b,21', GENIE_TOKEN: 'dummy-genie-'.repeat(4), GENIE_ALLOWED_CHAT_IDS: '21' });
 const ranges = {
   PORT: [1, 65535], LEASE_SECONDS_DEFAULT: [10, 3600], LEASE_SECONDS_MAX: [10, 86400],
   JOB_MAX_ATTEMPTS_DEFAULT: [1, 10], REQUEST_TEXT_MAX_CHARS: [1, 100000],
@@ -28,7 +28,7 @@ describe('configuration', () => {
     rejected({ JOB_API_TOKEN: valid().JOB_API_TOKEN });
     rejected({ ...valid(), ALLOWED_SOURCE_CHAT_IDS: '' });
     rejected({ ...valid(), ALLOWED_SOURCE_CHAT_IDS: ' , ' });
-    expect(loadConfig(valid())).toMatchObject({ HOST: '127.0.0.1', ALLOWED_SOURCE_CHAT_IDS: ['chat-a', 'chat-b'] });
+    expect(loadConfig(valid())).toMatchObject({ HOST: '127.0.0.1', ALLOWED_SOURCE_CHAT_IDS: ['chat-a', 'chat-b', '21'] });
     rejected({ ...valid(), PORT: '0' });
   });
   test('G60 all integer ranges and default lease relationship', () => {
@@ -39,4 +39,24 @@ describe('configuration', () => {
     }
     rejected({ ...valid(), LEASE_SECONDS_DEFAULT: '301', LEASE_SECONDS_MAX: '300' });
   });
+});
+
+
+test('G61 separated listeners and Genie configuration reject unsafe values without revealing them', () => {
+  const bad = {
+    GENIE_HOST: ['0.0.0.0', 'remote.invalid'], HOST: ['0.0.0.0', '::'],
+    GENIE_TOKEN: ['', 'dummy-short', valid().JOB_API_TOKEN],
+    GENIE_ALLOWED_CHAT_IDS: ['', ' ', '21,no', '1.5', '9007199254740992', '22'],
+    GENIE_PORT: ['0', '65536'], GENIE_REPLY_PAGE_LIMIT: ['0', '101'],
+  };
+  for (const [key, values] of Object.entries(bad)) {
+    for (const value of values) rejected({ ...valid(), [key]: value }, value);
+  }
+  rejected({ ...valid(), GENIE_TOKEN: undefined });
+  rejected({ ...valid(), GENIE_ALLOWED_CHAT_IDS: undefined });
+  for (const host of ['127.0.0.1', '::1', 'localhost']) {
+    expect(loadConfig({ ...valid(), GENIE_HOST: host })).toMatchObject({
+      GENIE_HOST: host, GENIE_PORT: 3321, GENIE_REPLY_PAGE_LIMIT: 50, GENIE_ALLOWED_CHAT_IDS: [21],
+    });
+  }
 });
