@@ -1,10 +1,24 @@
 import { z } from 'zod';
+import { isIP } from 'node:net';
+
+function specifiedIp(host: string): boolean {
+  switch (isIP(host)) {
+    case 4: return host !== '0.0.0.0';
+    case 6: {
+      try {
+        const normalized = new URL(`http://[${host}]`).hostname;
+        return normalized !== '[::]' && normalized !== '[::ffff:0:0]';
+      } catch { return false; }
+    }
+    default: return false;
+  }
+}
 
 const integer = (fallback: number, min: number, max: number) => z.string().regex(/^\d+$/).default(String(fallback)).transform(Number).pipe(z.number().int().min(min).max(max));
 const schema = z.object({
   JOB_API_TOKEN: z.string().min(32),
   ALLOWED_SOURCE_CHAT_IDS: z.string().transform(value => value.split(',').map(id => id.trim()).filter(Boolean)).refine(ids => ids.length > 0),
-  HOST: z.string().min(1).default('127.0.0.1').refine(host => host !== '0.0.0.0' && host !== '::'),
+  HOST: z.string().default('127.0.0.1').refine(specifiedIp),
   GENIE_HOST: z.enum(['127.0.0.1', '::1', 'localhost']).default('127.0.0.1'),
   GENIE_PORT: integer(3321, 1, 65535),
   GENIE_TOKEN: z.string().min(32),

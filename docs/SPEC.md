@@ -400,7 +400,7 @@ interface WakeDispatcher { wake(): Promise<WakeResult> }
 5. **outbox の token**：markSent / markFailed は「status='sending' かつ claim_token が一致」なら lease が切れていても受け付ける。reconcile で pending に戻すと claimed_by・claim_token・lease_expires_at を NULL にするので、古い送信者（A）の sent / failed は 409 CLAIM_TOKEN_MISMATCH になる。B が claim し直した後の A も同じ。
 6. **outbox の冪等キーの再利用**：同じ idempotency_key で job_id・kind・body のどれかが違えば 409 IDEMPOTENCY_CONFLICT。すべて同じなら 200 `created:false`。
 7. **通知の重複について**：Phase 1 が保証するのは「outbox の行が重複しない」「同じ行を 2 人が同時に送信中にしない」まで。送信は成功したが markSent の前に止まった場合は、lease 切れで pending に戻り再送されうる（at-least-once）。送信側（Phase 3）は idempotency_key を送信先の重複防止キーとして使う契約にする。
-8. **complete と通知予定の間の中断**：complete / fail は任意で `notify: {body}` を受け取り、同じトランザクションで outbox（kind は done / failed、idempotency_key は `job:<job_id>:<kind>`）を作る。`notify` を使わずに後から `/outbox` で登録してもよい（同じキーなら冪等）。Reconciler は、done / failed のジョブのうち、その kind の outbox が無いまま outboxStaleMs を過ぎたものを `terminalWithoutOutbox` として報告する。
+8. **complete と通知予定の間の中断**：complete / fail は任意で `notify: {body}` を受け取り、同じトランザクションで outbox（kind は終了状態の done / failed / cancelled、idempotency_key は `job:<job_id>:<kind>:<attempt>`（attempt は jobs.attempts））を作る。`notify` を使わずに後から `/outbox` で登録してもよい（同じキーなら冪等）。Reconciler は、done / failed / cancelled のジョブのうち、最後の試行の kind のキー `job:<job_id>:<kind>:<attempt>` の outbox が無いまま outboxStaleMs を過ぎたものを `terminalWithoutOutbox` として報告する。
 9. **jobs と outbox の分離**：outbox の enqueue（notify 経由を除く）、claim、sent、failed、reconcile は jobs の行を変えない。テストでは jobs の全列を前後で比べる。
 10. **ログと監査に入れる任意入力**：
     - リクエストログの path は Hono のルートのパターン（例 `/jobs/:id`）を出し、生のパスは出さない。マッチしなかったものは `unmatched` とする。
@@ -425,7 +425,7 @@ interface WakeDispatcher { wake(): Promise<WakeResult> }
 
 - 2 つは別の Hono アプリ（`createIngressApp`、`createApp`）。互いのルートは出さない（Ingress に `/jobs` は無く、Job API に `/ingress` は無い）。
 - `GENIE_HOST` は `127.0.0.1`、`::1`、`localhost` のどれかだけを許す。ほかは起動しない。
-- `HOST` は Mac mini では tailnet 上の自分のアドレスを `.env` に書く（値はリポジトリに書かない）。`0.0.0.0` と `::` は起動しない（全部の口で待ち受けないため）。Funnel には出さない。
+- `HOST` は Mac mini では tailnet 上の自分のアドレスを `.env` に書く（値はリポジトリに書かない）。`net.isIP()` で IP リテラルであることを求め、正規化後に未指定アドレス（`0.0.0.0`、`::` とその別表記、IPv4-mapped の `::ffff:0.0.0.0`）を拒否する。`0`、`0.0.0.00`、`localhost` を含むホスト名も起動しない。Funnel には出さない。
 - トークンは分ける。`GENIE_TOKEN`（32 字以上。Ingress だけに効く）と `JOB_API_TOKEN`（Job API だけに効く）。同じ値なら起動しない。
 - `GENIE_ALLOWED_CHAT_IDS`（必須、カンマ区切りの整数）。自分宛てトークの chat_id だけを書く。Ingress から作るジョブの source_chat_id はここに入っていなければならないので、`ALLOWED_SOURCE_CHAT_IDS` にも同じ値を入れる。
 
@@ -440,8 +440,9 @@ interface WakeDispatcher { wake(): Promise<WakeResult> }
   3. 本文の先頭の空白・不可視文字と、先頭の 🪔（U+1FA94、続く U+FE0F と空白）を取り除く。残りの先頭が 🧞‍♂️（U+1F9DE U+200D U+2642、U+FE0F は任意。性別なしの 🧞 も含む）なら → 200 `{status:"ignored", reason:"bot_reply"}`（返信ループの防止）。
   4. 残りが空 → 200 `{status:"ignored", reason:"empty"}`。
   5. 同じ guid を前に受けていれば（ジョブでもコマンドでも）→ 200 で前回と同じ応答。行も outbox も増えない。
-  6. 残りが `/help`、`/status <job_id>`、`/cancel <job_id>`、`/retry <job_id>` → 管理コマンド（13.3）。
-  7. それ以外 → ジョブを作る（source=`imessage`、source_message_id=guid、source_chat_id=chat_id の 10 進文字列、requester_id=`self`、job_type=`general`、request_text=残りの本文）。同じトランザクションで受付の outbox（kind=`ack`、キー `job:<job_id>:ack`）を作る。応答は 201 `{status:"created", job_id}`。
+  6. 本文が REQUEST_TEXT_MAX_CHARS を超える → 200 `{status:"rejected",reason:"too_long"}`。同じトランザクションで `cmd:<guid>` の返信「依頼が長すぎます（最大 N 字）。短くして送り直してください。」を作り guid で冪等にする。
+  7. 前後を trim した残りが `/help`、`/status`、`/cancel`、`/retry` で始まる本文 → 管理コマンド（13.3）。末尾の空白・改行・全角スペースを許す。それ以外の `/` 始まりは通常のジョブ。
+  8. それ以外 → ジョブを作る（source=`imessage`、source_message_id=guid、source_chat_id=chat_id の 10 進文字列、requester_id=`self`、job_type=`general`、request_text=残りの本文）。同じトランザクションで受付の outbox（kind=`ack`、キー `job:<job_id>:ack`）を作る。応答は 201 `{status:"created", job_id}`。
 - 受け付けた guid は `ingress_messages`（guid PRIMARY KEY、chat_id、kind（job / command / ignored）、job_id、outbox_id、received_at、created_at）に残す（受信時刻と受付時刻の記録）。本文は保存しない（ジョブの request_text を除く）。
 - 本文、sender_name はログに出さない。
 
@@ -454,8 +455,8 @@ interface WakeDispatcher { wake(): Promise<WakeResult> }
 | `/cancel J-000123` | 6 章の cancel と同じ | 結果 |
 | `/retry J-000123` | 6 章の retry と同じ | 結果（上限なら「再実行の上限に達しています」） |
 
-- ジョブ単位のアクセス制御: コマンドで触れるのは、source_chat_id がそのメッセージの chat_id と同じジョブだけ。違うトークのジョブと存在しないジョブは、どちらも「見つかりません」と返す（存在を漏らさない）。
-- 形が違う（ID なし、未知のコマンド）は `/help` と同じ返信に「コマンドを読めませんでした」を付ける。
+- ジョブ単位のアクセス制御: コマンドで触れるのは、source_chat_id がそのメッセージの chat_id と同じジョブだけ。違うトークのジョブと存在しないジョブは、どちらも「ジョブが見つかりません。」と返す（存在を漏らさない）。
+- 既知の管理コマンドで形が違う（ID なし、不正な ID）場合は `/help` と同じ返信に「コマンドを読めませんでした。」を付ける。未知のスラッシュで始まる依頼は通常のジョブにする。
 - 応答は 200 `{status:"command", command}`。
 
 ### 13.4 返信の文面（10 章の例に合わせる）
@@ -494,7 +495,21 @@ Genie の `HTTPReplySource`（Sources/GenieCore/ReplySource.swift）の形に合
   - `tailscale` が見つからない（ENOENT）→ `reason:"nc_not_found"`
   - 接続できない（応答が来ないまま子プロセスが終わる）→ `reason:"connect_failed"`
   - 時間切れ（既定 15 秒。子プロセスを止める）→ `reason:"timeout"`
-- Worker の 1 回分（`runWorkerOnce`）: claim → 処理 → complete / fail。どの段階で届かなくなっても、何も書かずに `outcome:"unreachable"` で終わる。claim 済みなら lease が切れたあと Reconciler が queued に戻し、Dispatcher が起こし直したときに再開する（at-least-once）。処理関数の例外だけを fail にする。
+- Worker の 1 回分（`runWorkerOnce`）: claim → 処理 → complete / fail。どの段階で届かなくなっても、何も書かずに `outcome:"unreachable"` で終わる。claim 済みなら lease が切れたあと Reconciler が queued に戻し、Dispatcher を配線した後は、起こし直したときに再開する（at-least-once）。処理関数の例外だけを fail にする。
 - CLI（`node dist/worker-cli.js <claim|get|heartbeat|complete|fail|outbox> [JSON]`）を Routine から Shell で呼べるようにする。トークンは `JOB_API_TOKEN_FILE`（600 のファイル）から読み、引数や出力に出さない。終了コード: 0 成功、3 届かない、4 API のエラー、2 使い方の誤り。出力は JSON 1 行。
 - 設定（Worker 側）: `JOB_API_TAILNET_HOST`、`JOB_API_PORT`、`JOB_API_TOKEN_FILE`、`TAILSCALE_BIN`（既定 `tailscale`）、`JOB_API_TIMEOUT_MS`（既定 15000）。値はリポジトリに書かない。
 - 手順と理由は `docs/worker.md` に書く。実際の tailscale の設定変更や tailscaled の再起動はしない。
+
+### 13.7 レビュー修正で確定した契約
+
+- 完了文は固定の部分と成果物 URL を先に確保し、可変の結果だけを切って1500字以内にする。summary が文字列でなければ「結果を保存しました。」。
+- 失敗文の原因は error.code から作る固定文。PROCESSING_ERROR と未知コードは「処理中にエラーが起きました」、LEASE_EXPIRED_MAX_ATTEMPTS は「実行期限切れが再試行の上限に達しました」。生の例外 message はマスクして error に保存するだけ。
+- fail が cancelled になったら kind=cancelled、本文は「ジョブ J-… はキャンセルしました。」。/retry を案内しない。
+- /help は各コマンドに説明を付ける。不正な既知コマンドは「コマンドを読めませんでした。」と使い方。見つからない場合は「ジョブが見つかりません。」。cancel は「キャンセルしました。」か「キャンセルを受け付けました。実行中の処理が止まるのを待っています。」。retry は「再実行を受け付けました。」と状態。
+- lease 切れで failed / cancelled にする Genie 経由のジョブ（既存 channel=genie の outbox があるもの）は、同じトランザクションで kind=failed / cancelled の outbox を作る。キーは12.8と同じ試行ごとの形式。
+- tailscale nc は要求送信後に stdin を EOF にしない。Content-Length または chunked の終端まで読んだら完了して子プロセスを止める。サーバーが閉じてプロセスが終了したときも完全な応答なら成功。
+- runWorkerOnce の process は `{job, claimToken, heartbeat(): Promise<boolean>}` を受け取る。heartbeat は cancel_requested を返す。届かないときは unreachable とし、process が例外を捕捉しても complete / fail しない。
+- worker-cli の complete / fail は notify 省略時に completion / failure の既定文を付ける。`--no-notify` で抑止する。使い方の理由コードに BAD_JSON / UNKNOWN_COMMAND / MISSING_CONFIG / TOKEN_FILE_MODE / TOKEN_TOO_SHORT を含める。API の4xxは code と message を保持し、トークンとファイル内容は出さない。
+- main.ts は Dispatcher を起動しません。Phase 1 は Worker を起こす仕組みが無いため、Worker は手動または外部から呼び出す必要があります。`tailscale nc` と Genie との実配送は実機で未確認です。
+
+成果物 URL と固定文だけで1500字を超える場合は、URLを切らず `ARTIFACT_NOTIFICATION_TOO_LONG` を返します。Worker は `outcome:"notification_error"` と job_id、code を返し、complete / fail は送らず claim を保持します。CLI は終了コード2と同じ理由コードを返します。短い URL か明示的な短い `notify` で完了してください。CLI では `--no-notify` も使えます。API の成果物保存上限は変更しません。

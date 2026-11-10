@@ -138,7 +138,7 @@
 | G53 | reconcile の 4 通り（cancel_requested 0/1 × attempts 上限未満/到達）がそれぞれ queued / failed / cancelled / cancelled になり、どれも run が lease_expired で ended_at が入る。max_attempts に達した queued は次の 1 件の claim に出ない | **11** | `test/reconciler/jobs.test.ts` |
 | G54 | outbox で A の lease が切れ、reconcile で pending に戻り、B が claim した後、A の sent / failed は 409 CLAIM_TOKEN_MISMATCH、B の sent は成功する。lease 切れでも reconcile 前なら A の sent は成功する | 12 | `test/scenario/stale-sender.test.ts` |
 | G55 | 同じ idempotency_key で job_id・kind・body のどれかが違う enqueue は 409 IDEMPOTENCY_CONFLICT | 8 | `test/api/outbox.test.ts` |
-| G56 | complete / fail に `notify:{body}` を付けると、同じトランザクションで outbox が 1 行でき（キー `job:<id>:done` / `job:<id>:failed`）、再送しても増えない。notify なしで done になり outboxStaleMs を過ぎたジョブは `terminalWithoutOutbox` に出る | 12 | `test/scenario/delivery-failure.test.ts` |
+| G56 | complete / fail に `notify:{body}` を付けると、同じトランザクションで outbox が 1 行でき（キー `job:<id>:done:<attempt>` / `job:<id>:failed:<attempt>`）、再送しても増えない。notify なしで done になり outboxStaleMs を過ぎたジョブは `terminalWithoutOutbox` に出る | 12 | `test/scenario/delivery-failure.test.ts` |
 | G57 | outbox の enqueue / claim / sent / failed / reconcile の前後で、ジョブの行の全列が同じ | **12** | `test/scenario/delivery-failure.test.ts` |
 | G58 | ログに出る path はルートのパターンで、未知のパス `/x/secret-like-value` は `unmatched` と出る。入れ子のオブジェクトの機密キーも `[REDACTED]`。event の reason、保存された error.message と last_error、500 の例外ログに、ダミーのトークン・メール・電話番号・`*.ts.net`・`100.64.x.x` が残らない | — | `test/logging/request-log.test.ts` |
 | G59 | reconcile の対象が limit+1 件あると、1 回目は limit 件、2 回目は 1 件、3 回目は 0 件 | 11 | `test/reconciler/jobs.test.ts` |
@@ -148,7 +148,7 @@
 
 | ID | 条件 | 15 章 | 置き場所の案 |
 |---|---|---|---|
-| G61 | `GENIE_HOST` が loopback 以外、`HOST` が `0.0.0.0` / `::`、`GENIE_TOKEN` が 32 字未満、`GENIE_TOKEN` と `JOB_API_TOKEN` が同じ、`GENIE_ALLOWED_CHAT_IDS` が空か整数でない、のどれも loadConfig が例外（値はメッセージに出ない） | — | `test/config.test.ts` |
+| G61 | `GENIE_HOST` が loopback 以外、`HOST` が IP リテラルでないか、正規化後の未指定アドレス（IPv4-mapped を含む）、`GENIE_TOKEN` が 32 字未満、`GENIE_TOKEN` と `JOB_API_TOKEN` が同じ、`GENIE_ALLOWED_CHAT_IDS` が空か整数でない、のどれも loadConfig が例外（値はメッセージに出ない） | — | `test/config.test.ts` |
 | G62 | Ingress アプリに `/jobs` は 404、Job API アプリに `/ingress/genie` と `/genie/replies` は 404。Ingress は JOB_API_TOKEN では 401、Job API は GENIE_TOKEN では 401 | — | `test/ingress/apps.test.ts` |
 | G63 | 正しい Genie の payload（先頭 🪔）で 201 `{status:"created", job_id}`、ジョブが queued、request_text から 🪔 が除かれ、ack の outbox が 1 行（channel genie、キー `job:<id>:ack`、文面は 13.4 の受付）、ingress_messages に received_at が残る | 1, 2, 3（モック） | `test/ingress/genie.test.ts` |
 | G64 | 同じ guid を 3 回送る（Promise.all を含む）と、ジョブ・ack・ingress_messages はどれも 1 行で、2 回目以降は同じ job_id を返す | **8** | `test/ingress/genie.test.ts` |
@@ -162,3 +162,17 @@
 | G72 | ENOENT は `nc_not_found`、応答なしで終了は `connect_failed`、時間切れ（偽の時計かタイマー注入）は `timeout` で子プロセスを止める。どれも例外を投げず `unreachable:true` | — | `test/worker/tailscale-nc.test.ts` |
 | G73 | `runWorkerOnce` は、claim・complete・fail のどれかで届かないと `outcome:"unreachable"` で終わり、fail を呼ばない。その後 lease 切れ → reconcile で queued → 次の回に claim して done になる（Transport は app.request() に流すモック） | **11** | `test/worker/run-once.test.ts` |
 | G74 | worker-cli は届かないとき終了コード 3、API エラーは 4、使い方の誤りは 2。出力にトークンが出ない（トークンは一時ファイルから読む） | — | `test/worker/cli.test.ts` |
+
+## レビュー修正の受け入れ条件
+
+| ID | 条件 | テスト |
+|---|---|---|
+| G75 | EOFで終了する偽ncでも応答を読み切り、長さ/chunked終端でkillする。close時も完全な応答は成功。不完全応答は失敗 | test/worker/tailscale-nc.test.ts |
+| G76 | retry後の同種通知は異なる試行キーになり、同じ試行の再送は増えない。terminalWithoutOutboxは最後の試行で判定する | test/fix1-store.test.ts |
+| G77 | 完了文のURLと固定文を保持し、結果だけを切って1500コードポイント以内。固定文とURLだけで上限超過の場合は明示エラー、独自notifyなら完了できる。失敗原因はコード別の固定文、生messageはマスク保存だけ | test/worker/review-fixes.test.ts |
+| G78 | fail取消時はcancelled通知のみ。lease切れのGenie由来failed/cancelledは同じトランザクションで試行別通知を作り再送は冪等 | test/fix1-store.test.ts |
+| G79 | 既知の管理コマンドだけを判定し前後空白を許す。未知のスラッシュ依頼はジョブ。help/見つからない/cancel/retryは13.7の文面 | test/fix1-store.test.ts |
+| G80 | 長すぎる依頼は200 rejected/too_long、cmd:guidの説明返信が1件だけ | test/fix1-store.test.ts |
+| G81 | CLIの理由コードと4xxのcode/messageを保持し秘密を出さない。notify省略は既定文、--no-notifyで抑止 | test/worker/cli.test.ts |
+| G82 | processにjob/claimToken/heartbeatを渡しcancel_requestedを取得。heartbeat通信失敗で終端書込みをしない。非文字列summaryは固定文 | test/worker/review-fixes.test.ts |
+| G83 | README/worker/genieはDispatcher未配線と実配送の実機未確認を明記する | test/worker/review-fixes.test.ts |

@@ -7,6 +7,13 @@ class Child extends EventEmitter {
   stdin = new PassThrough();
   stdout = new PassThrough();
   kill = vi.fn(() => true);
+  constructor() {
+    super();
+    this.stdin.on('finish', () => {
+      this.stdout.destroy();
+      this.emit('close', 0);
+    });
+  }
 }
 function setup() {
   const child = new Child();
@@ -18,6 +25,31 @@ function setup() {
 }
 const request = { method: 'POST', path: '/jobs/claim', headers: { Authorization: `Bearer ${'dummy-worker-'.repeat(4)}` }, body: JSON.stringify({ worker_id: 'worker-a', note: '日本語' }) };
 describe('tailscale nc transport', () => {
+  test.each(['length', 'chunked'])('G71 EOF-closing nc stays open until a complete %s response and is then killed', async framing => {
+    const s = setup();
+    const pending = s.transport.request(request);
+    await new Promise<void>(resolve => process.nextTick(resolve));
+    const head = framing === 'length' ? 'Content-Length: 2' : 'Transfer-Encoding: chunked';
+    const body = framing === 'length' ? '{}' : '2\r\n{}\r\n0\r\n\r\n';
+    s.child.stdout.write(`HTTP/1.1 200 OK\r\n${head}\r\n\r\n`);
+    expect(s.child.kill).not.toHaveBeenCalled();
+    s.child.stdout.write(body.slice(0, -1));
+    expect(s.child.kill).not.toHaveBeenCalled();
+    s.child.stdout.write(body.slice(-1));
+    s.timeout();
+    expect(await pending).toEqual({ ok: true, status: 200, body: '{}' });
+    expect(s.child.stdin.writableEnded).toBe(false);
+    expect(s.child.kill).toHaveBeenCalledOnce();
+    expect(s.timer.clear).toHaveBeenCalledOnce();
+  });
+  test('G71 a complete close-delimited response succeeds only after the server closes', async () => {
+    const s = setup();
+    const pending = s.transport.request(request);
+    s.child.stdout.write('HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n{}');
+    expect(s.timer.clear).not.toHaveBeenCalled();
+    s.child.emit('close', 0);
+    expect(await pending).toEqual({ ok: true, status: 200, body: '{}' });
+  });
   test.each(['length', 'chunked'])('G71 HTTP/1.1 request and fragmented %s response', async framing => {
     const s = setup();
     let sent = '';

@@ -7,7 +7,7 @@ export function encodeRequest(request: HttpRequest, host: string, port: number):
   if (headers.some(([name, value]) => !/^[A-Za-z0-9-]+$/.test(name) || /[\r\n]/.test(value))) throw new Error('Invalid HTTP headers');
   return Buffer.from(`${request.method} ${request.path} HTTP/1.1\r\nHost: ${host}:${port}\r\nConnection: close\r\nContent-Length: ${Buffer.byteLength(body)}\r\n${headers.map(([name, value]) => `${name}: ${value}\r\n`).join('')}\r\n${body}`);
 }
-export function decodeResponse(raw: Buffer): { status: number; body: string } | null {
+export function decodeResponse(raw: Buffer, connectionClosed = true): { status: number; body: string } | null {
   const boundary = raw.indexOf('\r\n\r\n');
   if (boundary < 0) return null;
   const [line, ...lines] = raw.subarray(0, boundary).toString('latin1').split('\r\n');
@@ -47,6 +47,7 @@ export function decodeResponse(raw: Buffer): { status: number; body: string } | 
     return null;
   }
   const length = headers.get('content-length');
+  if (length === undefined && !connectionClosed) return null;
   if (length !== undefined && (!/^\d+$/.test(length) || !Number.isSafeInteger(Number(length)) || payload.length !== Number(length))) return null;
   return { status: Number(match[1]), body: payload.toString('utf8') };
 }

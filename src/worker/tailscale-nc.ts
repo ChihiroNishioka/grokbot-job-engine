@@ -38,10 +38,13 @@ export function createTailscaleNcTransport(options: NcOptions): Transport {
       const chunks: Buffer[] = [];
       let size = 0;
       child.stdout.on('data', (data: Buffer | string) => {
+        if (settled) return;
         const chunk = Buffer.isBuffer(data) ? data : Buffer.from(data);
         size += chunk.length;
         if (size > 16 * 1024 * 1024) { finish({ ok: false, unreachable: true, reason: 'connect_failed' }); child.kill(); return; }
         chunks.push(chunk);
+        const parsed = decodeResponse(Buffer.concat(chunks), false);
+        if (parsed) { finish({ ok: true, ...parsed }); child.kill(); }
       });
       child.once('error', error => finish({ ok: false, unreachable: true, reason: 'code' in error && error.code === 'ENOENT' ? 'nc_not_found' : 'connect_failed' }));
       child.stdin.on('error', () => { finish({ ok: false, unreachable: true, reason: 'connect_failed' }); child.kill(); });
@@ -49,8 +52,8 @@ export function createTailscaleNcTransport(options: NcOptions): Transport {
         const parsed = decodeResponse(Buffer.concat(chunks));
         finish(parsed ? { ok: true, ...parsed } : { ok: false, unreachable: true, reason: 'connect_failed' });
       });
-      state.handle = timer.set(() => { finish({ ok: false, unreachable: true, reason: 'timeout' }); child.kill(); }, options.timeoutMs ?? 15000);
-      try { child.stdin.end(encodeRequest(request, options.host, options.port)); }
+      state.handle = timer.set(() => { if (settled) return; finish({ ok: false, unreachable: true, reason: 'timeout' }); child.kill(); }, options.timeoutMs ?? 15000);
+      try { child.stdin.write(encodeRequest(request, options.host, options.port)); }
       catch { finish({ ok: false, unreachable: true, reason: 'connect_failed' }); child.kill(); }
     });
   } };

@@ -90,7 +90,7 @@ export class JobStore {
       const run=db.prepare("UPDATE job_runs SET outcome='done',ended_at=? WHERE job_id=? AND attempt=? AND outcome='running'").run(now,id,row.attempts);
       if(run.changes!==1)throw new Error('Running attempt is missing');
       writeEvent(db,{job_id:id,at:now,actor:`worker:${row.claimed_by}`,type:'job.done',from_status:'claimed',to_status:'done'});
-      if(input.notify)new OutboxStore(this.deps).enqueue({job_id:id,idempotency_key:`job:${id}:done`,kind:'done',body:input.notify.body});
+      if(input.notify)new OutboxStore(this.deps).enqueue({job_id:id,idempotency_key:`job:${id}:done:${row.attempts}`,kind:'done',body:input.notify.body});
       return {job:row};
     }).immediate();
   }
@@ -104,7 +104,10 @@ export class JobStore {
       const run=db.prepare("UPDATE job_runs SET outcome=?,ended_at=?,error_code=? WHERE job_id=? AND attempt=? AND outcome='running'").run(row.status,now,input.error.code,id,row.attempts);
       if(run.changes!==1)throw new Error('Running attempt is missing');
       writeEvent(db,{job_id:id,at:now,actor:`worker:${row.claimed_by}`,type:`job.${row.status}`,from_status:'claimed',to_status:row.status});
-      if(input.notify)new OutboxStore(this.deps).enqueue({job_id:id,idempotency_key:`job:${id}:failed`,kind:'failed',body:input.notify.body});
+      if(input.notify){
+        const kind=row.status==='cancelled'?'cancelled':'failed';
+        new OutboxStore(this.deps).enqueue({job_id:id,idempotency_key:`job:${id}:${kind}:${row.attempts}`,kind,body:kind==='cancelled'?`ジョブ ${id} はキャンセルしました。`:input.notify.body});
+      }
       return {job:row};
     }).immediate();
   }

@@ -19,6 +19,12 @@ function rejected(env: NodeJS.ProcessEnv, secret?: string) {
 }
 
 describe('configuration', () => {
+  test.each(['0', '0.0.0.00', '0.0.0.0', '::', '0:0:0:0:0:0:0:0', '::0', '::ffff:0.0.0.0', '0:0:0:0:0:ffff:0:0', '::FFFF:0:0', 'localhost', 'remote.invalid'])('G61 HOST rejects nonliteral or unspecified address %s', HOST => {
+    rejected({ ...valid(), HOST }, HOST);
+  });
+  test.each(['127.0.0.1', '::1', '0:0:0:0:0:0:0:1', '::ffff:127.0.0.1', '192.0.2.10', '2001:db8::1'])('G61 HOST accepts specified IP literal %s', HOST => {
+    expect(loadConfig({ ...valid(), HOST }).HOST).toBe(HOST);
+  });
   test('G01 missing and short tokens fail without leaking values', () => {
     rejected({ ALLOWED_SOURCE_CHAT_IDS: 'chat-a' });
     for (const token of ['', 'sensitive-dummy', 'x'.repeat(31)]) rejected({ ...valid(), JOB_API_TOKEN: token }, token);

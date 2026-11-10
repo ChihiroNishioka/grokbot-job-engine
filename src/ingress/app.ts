@@ -16,30 +16,32 @@ import { acknowledgement,requestText,truncate,replyText } from './text.js';
 const payloadSchema=z.strictObject({v:z.literal(1),event:z.literal('message'),idempotency_key:z.string().min(1).max(256),guid:z.string().min(1).max(256),chat_id:z.number().int().safe(),text:z.string(),created_at:z.string().nullable().optional(),sender_is_me:z.boolean(),sender_name:z.string()}).refine(p=>p.guid===p.idempotency_key);
 type Payload=z.infer<typeof payloadSchema>;
 type Command='help'|'status'|'cancel'|'retry';
-type Receipt={guid:string;chat_id:number;kind:'job'|'command'|'ignored';job_id:string|null;outbox_id:number|null;command:Command|null};
-const help='/help\n/status <job_id>\n/cancel <job_id>\n/retry <job_id>';
+type Receipt={guid:string;chat_id:number;kind:'job'|'command'|'ignored';job_id:string|null;outbox_id:number|null;command:Command|'too_long'|null};
+const help='/help：使い方を表示します。\n/status <job_id>：状態を確認します。\n/cancel <job_id>：キャンセルします。\n/retry <job_id>：失敗したジョブを再実行します。';
 const statusText={queued:'受付済み',claimed:'実行中',done:'完了',failed:'失敗',cancelled:'キャンセル済み'};
 function parseCommand(text:string):{command:Command;id?:string;invalid:boolean} {
+ text=text.trim();
  if(text==='/help')return {command:'help',invalid:false};
- const match=/^\/(status|cancel|retry) (J-\d{6,})$/.exec(text);
+ const match=/^\/(status|cancel|retry)\s+(J-\d{6,})$/.exec(text);
  const name=match?.[1];
  if((name==='status'||name==='cancel'||name==='retry')&&match?.[2])return {command:name,id:match[2],invalid:false};
  return {command:'help',invalid:true};
 }
 function executeCommand(deps:AppDeps,chat:number,text:string):{command:Command;job_id:string|null;text:string} {
  const parsed=parseCommand(text);
- if(parsed.command==='help')return {command:'help',job_id:null,text:(parsed.invalid?'コマンドを読めませんでした\n':'')+help};
+ if(parsed.command==='help')return {command:'help',job_id:null,text:(parsed.invalid?'コマンドを読めませんでした。\n':'')+help};
  const store=new JobStore(deps);
  let job:Job;
- try {job=store.get(parsed.id??'');}catch(error){if(error instanceof StoreError&&error.code==='JOB_NOT_FOUND')return {command:parsed.command,job_id:null,text:'見つかりません'};throw error;}
- if(job.source_chat_id!==String(chat))return {command:parsed.command,job_id:null,text:'見つかりません'};
+ try {job=store.get(parsed.id??'');}catch(error){if(error instanceof StoreError&&error.code==='JOB_NOT_FOUND')return {command:parsed.command,job_id:null,text:'ジョブが見つかりません。'};throw error;}
+ if(job.source_chat_id!==String(chat))return {command:parsed.command,job_id:null,text:'ジョブが見つかりません。'};
  try {
   if(parsed.command==='cancel')job=store.cancel(job.job_id).job;
   if(parsed.command==='retry')job=store.retry(job.job_id).job;
-  return {command:parsed.command,job_id:job.job_id,text:`ジョブID：${job.job_id}\n状態：${statusText[job.status]}\n試行回数：${job.attempts}\nキャンセル要求：${job.cancel_requested?'あり':'なし'}`};
+  const action=parsed.command==='cancel'?(job.status==='cancelled'?'キャンセルしました。\n':'キャンセルを受け付けました。実行中の処理が止まるのを待っています。\n'):parsed.command==='retry'?'再実行を受け付けました。\n':'';
+  return {command:parsed.command,job_id:job.job_id,text:`${action}ジョブID：${job.job_id}\n状態：${statusText[job.status]}\n試行回数：${job.attempts}\nキャンセル要求：${job.cancel_requested?'あり':'なし'}`};
  }catch(error){
   if(!(error instanceof StoreError))throw error;
-  const message=error.code==='MAX_ATTEMPTS_REACHED'?'再実行の上限に達しています':'この状態では実行できません';
+  const message=error.code==='MAX_ATTEMPTS_REACHED'?'再実行の上限に達しています。':'この状態では実行できません。';
   return {command:parsed.command,job_id:job.job_id,text:message};
  }
 }
@@ -54,18 +56,18 @@ function receive(deps:AppDeps,p:Payload) {
   const previous=db.prepare<[string],Receipt>('SELECT * FROM ingress_messages WHERE guid=?').get(p.guid);
   if(previous){
    if(previous.chat_id!==p.chat_id)throw new StoreError('IDEMPOTENCY_CONFLICT');
-   return {status:200 as const,body:previous.kind==='command'?{status:'command',command:previous.command}:{status:'created',job_id:previous.job_id}};
+   return {status:200 as const,body:previous.command==='too_long'?{status:'rejected',reason:'too_long'}:previous.kind==='command'?{status:'command',command:previous.command}:{status:'created',job_id:previous.job_id}};
   }
   const now=clock.now();
-  if(text.startsWith('/')) {
-   const result=executeCommand(deps,p.chat_id,text);
+  const tooLong=[...text].length>deps.config.REQUEST_TEXT_MAX_CHARS;
+  if(tooLong || /^\/(help|status|cancel|retry)(?=\s|$)/.test(text.trim())) {
+   const result=tooLong?{command:'too_long' as const,job_id:null,text:`依頼が長すぎます（最大 ${deps.config.REQUEST_TEXT_MAX_CHARS} 字）。短くして送り直してください。`}:executeCommand(deps,p.chat_id,text);
    const inserted=db.prepare("INSERT INTO delivery_outbox(job_id,idempotency_key,kind,channel,target_chat_id,in_reply_to,body,status,created_at,updated_at) VALUES (?,?,'command','genie',?,?,?,'pending',?,?)").run(result.job_id,`cmd:${p.guid}`,String(p.chat_id),p.guid,truncate(result.text),now,now);
    const outboxId=Number(inserted.lastInsertRowid);
    writeEvent(db,{job_id:result.job_id,outbox_id:outboxId,at:now,actor:'genie',type:'outbox.enqueued',to_status:'pending'});
-   db.prepare("INSERT INTO ingress_messages(guid,chat_id,kind,job_id,outbox_id,received_at,created_at,command) VALUES (?,?,'command',?,?,?,?,?)").run(p.guid,p.chat_id,result.job_id,outboxId,now,now,result.command);
-   return {status:200 as const,body:{status:'command',command:result.command}};
+   db.prepare("INSERT INTO ingress_messages(guid,chat_id,kind,job_id,outbox_id,received_at,created_at,command) VALUES (?,?,?,?,?,?,?,?)").run(p.guid,p.chat_id,tooLong?'ignored':'command',result.job_id,outboxId,now,now,result.command);
+   return {status:200 as const,body:tooLong?{status:'rejected',reason:'too_long'}:{status:'command',command:result.command}};
   }
-  if([...text].length>deps.config.REQUEST_TEXT_MAX_CHARS)throw new StoreError('VALIDATION_ERROR');
   const result=new JobStore(deps).create({source:'imessage',source_message_id:p.guid,source_chat_id:String(p.chat_id),requester_id:'self',job_type:'general',request_text:text});
   const id=result.job.job_id;
   const ack=db.prepare("INSERT INTO delivery_outbox(job_id,idempotency_key,kind,channel,target_chat_id,in_reply_to,body,status,created_at,updated_at) VALUES (?,?,'ack','genie',?,?,?,'pending',?,?)").run(id,`job:${id}:ack`,String(p.chat_id),p.guid,acknowledgement(id,text),now,now);

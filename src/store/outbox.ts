@@ -22,7 +22,7 @@ export class OutboxStore {
       const job=db.prepare<[string],{source_chat_id:string;source_message_id:string}>('SELECT source_chat_id,source_message_id FROM jobs WHERE job_id=?').get(input.job_id);
       if(!job)throw new StoreError('JOB_NOT_FOUND');
       const now=clock.now();
-      const channel=db.prepare<[string],{channel:string}>("SELECT 'genie' AS channel FROM ingress_messages WHERE job_id=? AND kind='job' LIMIT 1").get(input.job_id)?.channel??'imessage';
+      const channel=db.prepare<[string,string],{channel:string}>("SELECT 'genie' AS channel WHERE EXISTS (SELECT 1 FROM ingress_messages WHERE job_id=? AND kind='job') OR EXISTS (SELECT 1 FROM delivery_outbox WHERE job_id=? AND channel='genie')").get(input.job_id,input.job_id)?.channel??'imessage';
       const inserted=db.prepare("INSERT INTO delivery_outbox(job_id,idempotency_key,kind,channel,target_chat_id,in_reply_to,body,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'pending',?,?)").run(input.job_id,input.idempotency_key,input.kind,channel,job.source_chat_id,job.source_message_id,input.body,now,now);
       const id=Number(inserted.lastInsertRowid);
       writeEvent(db,{job_id:input.job_id,outbox_id:id,at:now,actor:'api',type:'outbox.enqueued',to_status:'pending'});

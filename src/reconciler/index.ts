@@ -1,4 +1,6 @@
 import type { Deps, Job, Outbox } from '../store/types.js';
+import { OutboxStore } from '../store/outbox.js';
+import { failure } from '../lib/reply-text.js';
 import { writeEvent } from '../store/events.js';
 
 export interface ReconcileReport {
@@ -41,6 +43,9 @@ export function reconcile(
     if (run.changes !== 1) throw new Error('Running attempt is missing');
     const type = job.status === 'queued' ? 'job.requeued' : `job.${job.status}`;
     writeEvent(db, { job_id: id, at: now, actor: 'reconciler', type, from_status: 'claimed', to_status: job.status, reason: 'lease_expired' });
+    if ((job.status === 'failed' || job.status === 'cancelled') && db.prepare("SELECT 1 FROM delivery_outbox WHERE job_id=? AND channel='genie' LIMIT 1").get(id)) {
+      new OutboxStore({ db, clock, config }).enqueue({ job_id: id, kind: job.status, idempotency_key: `job:${id}:${job.status}:${job.attempts}`, body: job.status === 'cancelled' ? `ジョブ ${id} はキャンセルしました。` : failure(id, 'LEASE_EXPIRED_MAX_ATTEMPTS') });
+    }
     return job;
   });
   for (const { job_id } of candidates) {
@@ -87,8 +92,8 @@ export function reconcile(
   `).all(now, now - outboxStaleMs, limit);
   report.terminalWithoutOutbox = db.prepare<[number, number, number], { id: string; ageMs: number }>(`
     SELECT j.job_id AS id, ?-j.updated_at AS ageMs FROM jobs AS j
-    WHERE j.status IN ('done','failed') AND j.updated_at<?
-      AND NOT EXISTS (SELECT 1 FROM delivery_outbox AS o WHERE o.job_id=j.job_id AND o.kind=j.status)
+    WHERE j.status IN ('done','failed','cancelled') AND j.updated_at<?
+      AND NOT EXISTS (SELECT 1 FROM delivery_outbox AS o WHERE o.job_id=j.job_id AND o.kind=j.status AND o.idempotency_key='job:' || j.job_id || ':' || j.status || ':' || j.attempts)
     ORDER BY j.updated_at,j.job_id LIMIT ?
   `).all(now, now - outboxStaleMs, limit);
   return report;

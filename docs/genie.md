@@ -1,5 +1,7 @@
 # Genie との契約
 
+main.ts は Dispatcher を起動しません。Phase 1 は Worker を起こす仕組みが無いため、Worker は手動または外部から呼び出す必要があります。`tailscale nc` と Genie との実配送は実機で未確認です。
+
 Job Engine は Mac mini 上で Genie 用の Ingress と Worker 用の Job API を別々に待ち受ける。Ingress は loopback だけに公開し、Genie 専用の `GENIE_TOKEN` で認証する。Job API のトークンは使えない。設定手順は [README](../README.md)、Worker の経路は [worker.md](worker.md) を参照する。
 
 ## Webhook の受け付け
@@ -31,8 +33,9 @@ Job Engine は Mac mini 上で Genie 用の Ingress と Worker 用の Job API �
 3. 先頭の空白・不可視文字と先頭の 🪔、その直後の variation selector と空白を除く。残った先頭が性別なしを含む 🧞 なら `reason:"bot_reply"` として無視する。
 4. 残りが空なら `reason:"empty"` として無視する。
 5. 同じ guid の受付があれば、前回と同じ JSON を 200 で返す。ジョブ、コマンド、副作用を追加しない。許可済みの別 chat_id で同じ guid を使った場合は 409 にする。
-6. `/help`、`/status <job_id>`、`/cancel <job_id>`、`/retry <job_id>` を管理コマンドとして処理する。未知のスラッシュコマンドや形が違うコマンドには使い方を返す。
-7. それ以外をジョブとして作り、201 `{"status":"created","job_id":"J-000001"}` を返す。
+6. 文字数上限を超える本文は 200 `{"status":"rejected","reason":"too_long"}` とし、キー `cmd:<guid>` の返信「依頼が長すぎます（最大 N 字）。短くして送り直してください。」を同じトランザクションで記録する。同じ guid の再送は返信を増やさない。
+7. `/help`、`/status <job_id>`、`/cancel <job_id>`、`/retry <job_id>` を管理コマンドとして処理する。前後の空白・改行・全角スペースを除いて判定する。既知のコマンドで ID が無いか形が違う場合は「コマンドを読めませんでした。」と使い方を返す。それ以外のスラッシュで始まる依頼は通常のジョブになる。
+8. それ以外をジョブとして作り、201 `{"status":"created","job_id":"J-000001"}` を返す。
 
 ジョブの source は `imessage`、source_message_id は guid、source_chat_id は chat_id の 10 進文字列、requester_id は `self`、job_type は `general`。`GENIE_ALLOWED_CHAT_IDS` の値は `ALLOWED_SOURCE_CHAT_IDS` にも必要。request_text は印を除いた本文で、設定の文字数上限を適用する。
 
@@ -46,7 +49,7 @@ Job Engine は Mac mini 上で Genie 用の Ingress と Worker 用の Job API �
 
 `/status` はジョブ ID、日本語の状態、試行回数、キャンセル要求の有無を返す。状態の表記は受付済み、実行中、完了、失敗、キャンセル済み。`/cancel` と `/retry` は Job API と同じ状態遷移を使う。実行中の cancel はキャンセル要求を立てる。retry の上限では「再実行の上限に達しています」と返す。
 
-コマンドが参照できるのは source_chat_id が同じジョブだけ。別のトークのジョブと存在しないジョブは、どちらも「見つかりません」と返す。再送ではコマンドを再実行しない。
+コマンドが参照できるのは source_chat_id が同じジョブだけ。別のトークのジョブと存在しないジョブは、どちらも「ジョブが見つかりません。」と返す。再送ではコマンドを再実行しない。
 
 ## 返信取得と cursor
 
@@ -87,3 +90,11 @@ Authorization: Bearer <GENIE_TOKEN>
 返信は最大 1500 コードポイントに切る。🧞‍♂️ を先頭に付けない。Genie の ReplyComposer が 1 通目に印だけを送り、本文を別に送るため。先頭を 🪔 にもしない。
 
 Genie 由来のジョブでは追加の enqueue と complete/fail の notify も genie channel に入る。`/outbox/claim` は genie 行を取得しない。Reconciler の staleOutbox は genie 行も報告する。
+
+完了文は固定文と成果物 URL を先に確保し、結果の可変部分だけを切って1500字以内にします。失敗文の原因は error.code から固定の安全な文を作り、未知のコードは「処理中にエラーが起きました」とします。例外の message はマスクして error にだけ保存します。cancelled の返信は「ジョブ J-… はキャンセルしました。」で、retry は案内しません。
+
+/help は各コマンドの説明を返します。cancel は「キャンセルしました。」または「キャンセルを受け付けました。実行中の処理が止まるのを待っています。」、retry は「再実行を受け付けました。」と状態を返します。
+
+complete / fail と Reconciler の終端通知は `job:<job_id>:<kind>:<attempt>` をキーにします。Reconciler は既存の genie channel の outbox があるジョブを Genie 経由と判定し、lease 切れで failed / cancelled にしたときに同じトランザクションで通知を作ります。
+
+成果物 URL と固定文だけで1500字を超える場合は、URLを切らず `ARTIFACT_NOTIFICATION_TOO_LONG` を返します。Worker は `outcome:"notification_error"` と job_id、code を返し、complete / fail は送らず claim を保持します。CLI は終了コード2と同じ理由コードを返します。短い URL か明示的な短い `notify` で完了してください。CLI では `--no-notify` も使えます。API の成果物保存上限は変更しません。

@@ -1,5 +1,7 @@
 # grokbot-job-engine
 
+main.ts は Dispatcher を起動しません。Phase 1 は Worker を起こす仕組みが無いため、Worker は手動または外部から呼び出す必要があります。`tailscale nc` と Genie との実配送は実機で未確認です。
+
 iMessage から受け付ける仕事をジョブとして保存し、Worker への受け渡し、状態、結果、通知予定を管理する Job Engine です。
 
 SQLite の Job Store、Genie の webhook を受ける Ingress、Genie が取りに来る返信、Worker 用 Job API を提供します。Worker は Transport を差し替えられ、box からは `tailscale nc` 経由でアクセスします。Dispatcher は Worker を起こす合図の契約とモックを提供します。
@@ -24,7 +26,7 @@ cp .env.example .env
 | Genie の Ingress と返信取得 | `GENIE_HOST=127.0.0.1` | `GENIE_PORT=3321` | `GENIE_TOKEN` |
 | Worker の Job API | `HOST=127.0.0.1` はローカル用の例 | `PORT=3320` | `JOB_API_TOKEN` |
 
-Mac mini では `HOST` に tailnet 上の自分のアドレスを書きます。`.env.example` の `HOST` は `127.0.0.1` のままです。`0.0.0.0` と `::` は拒否します。Genie 用は loopback のみです。どちらも Funnel には出しません。
+Mac mini では `HOST` に tailnet 上の自分のアドレスを書きます。`.env.example` の `HOST` は `127.0.0.1` のままです。`HOST` は `net.isIP()` が認める IP リテラルだけを許します。未指定アドレスの別表記と IPv4-mapped の全ゼロも拒否します。Genie 用は loopback のみです。どちらも Funnel には出しません。
 
 ```dotenv
 HOST=127.0.0.1
