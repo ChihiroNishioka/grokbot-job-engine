@@ -85,13 +85,13 @@ test('G86 completion preserves prefix, 200 summary codepoints and ordered whole 
   expect(body.split('📝').length - 1).toBeGreaterThanOrEqual(200);
   expect(body.indexOf(first)).toBeLessThan(body.indexOf(last));
   expect(body).not.toContain(huge);
-  expect(body).toContain('ほか 1 件の成果物 URL は結果に保存しました。');
+  expect(body).toContain('ほか 1 件の成果物 URL は /status J-000001 で確認できます。');
   expect(completion('J-000001', '短い結果', [huge])).toContain('短い結果');
 });
 
 test('G86 oversized artifact notification completes once and never requeues after lease expiry', async () => {
   const { c, client } = worker(2);
-  const urls = ['https://example.invalid/' + 'x'.repeat(1800)];
+  const urls = ['https://example.invalid/' + 'x'.repeat(1176), 'https://example.invalid/' + 'y'.repeat(1176)];
   let processed = 0;
   const process = async () => { processed++; return { result: { summary: '保存した結果' }, artifact_urls: urls }; };
   expect(await runWorkerOnce({ client, claim: { worker_id: 'worker-a', lease_seconds: 10 }, process })).toMatchObject({ outcome: 'done' });

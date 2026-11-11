@@ -1,3 +1,4 @@
+import { artifactUrls, artifactOmissionFlags } from '../lib/artifact-urls.js';
 import { prepareNotification, type NotificationFlags } from './notification.js';
 import type { ClaimInput } from '../store/types.js';
 import { mask } from '../logging/mask.js';
@@ -8,7 +9,7 @@ export type ProcessResult =
   | { ok?: true; result: Record<string, unknown>; artifact_urls?: string[]; notify?: { body: string } }
   | { ok: false; code: FailureCode; message?: string; notify?: { body: string } };
 export interface ProcessContext { job: WorkerJob; claimToken: string; heartbeat(): Promise<boolean> }
-type Outcome = { outcome: 'idle' } | { outcome: 'done' | 'failed' | 'cancelled'; job_id: string } & NotificationFlags | { outcome: 'unreachable'; reason: string } | { outcome: 'api_error'; status: number; code: string };
+type Outcome = { outcome: 'idle' } | { outcome: 'done' | 'failed' | 'cancelled'; job_id: string } & NotificationFlags & { artifact_urls_omitted?: number } | { outcome: 'unreachable'; reason: string } | { outcome: 'api_error'; status: number; code: string };
 function failedResult(result: Exclude<ApiResult<unknown>, { ok: true }>): Outcome {
   return result.unreachable ? { outcome: 'unreachable', reason: result.reason } : { outcome: 'api_error', status: result.status, code: result.code };
 }
@@ -33,6 +34,9 @@ export async function runWorkerOnce({ client, claim, process }: { client: JobApi
     result = { ok: false, code: 'PROCESSING_ERROR', message: error instanceof Error ? error.message : '処理中にエラーが起きました' };
   }
   if (heartbeatState.failure) return failedResult(heartbeatState.failure);
+  if (result.ok !== false && !artifactUrls.safeParse(result.artifact_urls ?? []).success) {
+    result = { ok: false, code: 'INVALID_REQUEST', message: 'artifact_urls は20件以内、各1200コードポイント以内の HTTPS URL が必要です。' };
+  }
   if (result.ok === false) {
     const message = [...mask(result.message ?? '')].slice(0, 1000).join('');
     const notification = prepareNotification(result.notify?.body, () => failure(job.job_id, result.code, { canRetry: job.attempts < job.max_attempts, maxAttempts: job.max_attempts }));
@@ -44,5 +48,5 @@ export async function runWorkerOnce({ client, claim, process }: { client: JobApi
   const summary = typeof result.result.summary === 'string' ? result.result.summary : '結果を保存しました。';
   const notification = prepareNotification(result.notify?.body, () => completion(job.job_id, summary, result.artifact_urls));
   const completed = await client.complete(job.job_id, { claim_token, result: result.result, ...(result.artifact_urls ? { artifact_urls: result.artifact_urls } : {}), notify: { body: notification.body } });
-  return completed.ok ? { outcome: 'done', job_id: job.job_id, ...notification.flags } : failedResult(completed);
+  return completed.ok ? { outcome: 'done', job_id: job.job_id, ...notification.flags, ...artifactOmissionFlags(result.artifact_urls, notification.body) } : failedResult(completed);
 }

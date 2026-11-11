@@ -154,7 +154,7 @@
 | G64 | 同じ guid を 3 回送る（Promise.all を含む）と、ジョブ・ack・ingress_messages はどれも 1 行で、2 回目以降は同じ job_id を返す | **8** | `test/ingress/genie.test.ts` |
 | G65 | 許可外の chat_id は 403 で行が増えない。sender_is_me=false は ignored で行が増えない（ingress_messages の ignored は可） | 13 | `test/ingress/genie.test.ts` |
 | G66 | 本文が `🧞‍♂️ 完了しました`、`🪔 🧞‍♂️ …`、`🧞 …`、先頭に空白のある `  🧞‍♂️…` は ignored（bot_reply）でジョブも outbox も作らない。空や 🪔 だけは ignored（empty） | **14** | `test/ingress/loop.test.ts` |
-| G67 | `/status`、`/cancel`、`/retry`、`/help` がそれぞれ 13.3 どおりに動き、command の outbox（キー `cmd:<guid>`）が 1 行できる。同じ guid の再送で再実行されない。別の chat のジョブと存在しないジョブは同じ「見つかりません」 | 7, **15** | `test/ingress/commands.test.ts` |
+| G67 | `/status`、`/cancel`、`/retry`、`/help` がそれぞれ 13.3 どおりに動き、command の outbox（キー `cmd:<guid>`）が 1 行できる。同じ guid の再送で再実行されない。cancel/retry は別の chat と存在しないジョブに同じ「見つかりません」。status は別の許可トークへ状態だけを返す | 7, **15** | `test/ingress/commands.test.ts` |
 | G68 | `GET /genie/replies`（cursor なし）が pending の genie 行を昇順で、13.5 の形（id `je-<n>`、chat_id 数値、in_reply_to_guid、created_at）で返し、cursor が最後の `o:<n>`。同じ cursor で取り直すと同じ内容。page の上限を超える分は次のページ | 2, 6（モック） | `test/ingress/replies.test.ts` |
 | G69 | `cursor=o:N` で取ると N 以下の pending の genie 行が sent（external_ref `genie:cursor`、event あり）になり、返事に出ない。ジョブの行は全列そのまま。形の違う cursor は 400。genie 以外の channel の行は出ない。`/outbox/claim` は genie の行を取らない | **12** | `test/ingress/replies.test.ts` |
 | G70 | 受付 → claim → complete（notify）→ 返事の取得で、同じ guid に ack と done の 2 件が別の id で出る | 6（モック） | `test/scenario/genie-flow.test.ts` |
@@ -187,3 +187,15 @@
 | G87 | WorkerとCLIは独自notifyを共通関数で切り、notify_truncatedを返す。記号除去で空なら既定文に置き換えnotify_replacedを返す | test/worker/mids-notify.test.ts の G87 |
 | G88 | CLIの - はstdinをEOFまで読み、改行と引用符を保持。UTF-8の1MiBまで受理し超過はSTDIN_TOO_LARGE、不正JSONはBAD_JSON。値はエラーに出さない | test/worker/mids-stdin.test.ts の G88 |
 | G89 | WorkerとCLIでheartbeat取消を確認しfailするとcancelledと固定取消通知だけ。独自notifyを無視。確認せずcompleteはdone。ガイドにこの手順がある | test/worker/mids-cancel.test.ts の G89 |
+
+
+## 成果物URLをチャットから確認する
+
+| ID | 条件 | テスト |
+|---|---|---|
+| G90 | 完了通知の省略行は件数・ジョブID・/statusでの確認方法を含む。1500コードポイントと最低200字の要約を維持 | test/worker/urlstatus.test.ts の G90 |
+| G91 | doneのURLは元トークだけに状態行のあとで表示。全20件をURLごとに切らず1500以内に分割し次ページを案内。短いURLは同じページ。URLなしは1ページ。別の許可トークは状態のみ、cancel/retryは拒否。再送は冪等。旧長大URLは上限を説明し切らない | test/worker/urlstatus.test.ts の G91 |
+| G92 | /status job_id [ページ] は省略時1。不正な番号と安全な整数の範囲外はページ番号の説明、ページ外は有効範囲を返す。helpにも構文を記載 | test/worker/urlstatus.test.ts の G91・G92 |
+| G93 | API completeとCLIはHTTPS・各1200コードポイント以内・20件以内・空白と制御文字不可の共有規則。境界1200を受理、1201を拒否 | test/worker/urlstatus.test.ts の G93 |
+| G94 | processの不正URLはcomplete前にfail INVALID_REQUEST、理由だけ保存。completeを呼ばず、lease切れと次回実行でも再処理しない | test/worker/urlstatus.test.ts の G94 |
+| G95 | Worker/CLI成功時は未掲載URL件数を返す。独自notifyとno-notifyにも適用。失敗時はnotify_*と省略件数を付けない | test/worker/urlstatus.test.ts の G95 |

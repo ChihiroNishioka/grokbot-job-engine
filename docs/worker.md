@@ -18,7 +18,7 @@ box の tailscaled は userspace-networking で動作し、SOCKS と HTTP のプ
 
 1. `claim` で 1 件を取得します。応答の `job.attempts` は今回を含む試行回数、`job.max_attempts` は試行上限です。ジョブが無ければ `outcome: "idle"` で終了します。
 2. 処理関数 `process({job, claimToken, heartbeat})` にジョブ、claim token、`heartbeat(): Promise<boolean>` を渡します。長い処理は lease 内に heartbeat を呼びます。heartbeat() が true を返したら、処理関数で処理を止め、`{ok:false, code:"PROCESSING_ERROR"}` を返してください。`runWorkerOnce` が `fail` を送ります。CLI の場合は heartbeat 応答の `cancel_requested:true` を確認して処理を止め、同じコードで `fail` を呼んでください。
-3. 処理関数が成功として返す `{ok?:true, result, artifact_urls?, notify?}` を `complete` に送ります。`notify` が無ければ、文字列の `result.summary`（それ以外は「結果を保存しました。」）と成果物 URL から仕様 13.4 の完了文を作ります。
+3. 成果物URLを検証してから、処理関数が成功として返す `{ok?:true, result, artifact_urls?, notify?}` を `complete` に送ります。`notify` が無ければ、文字列の `result.summary`（それ以外は「結果を保存しました。」）と成果物 URL から仕様 13.4 の完了文を作ります。
 4. 処理関数が `{ok:false, code, message?, notify?}` を返した場合、または例外を投げた場合は `fail` に送ります。`code` は下表の固定コードから選べます。例外には `PROCESSING_ERROR` を使います。サーバーの `cancel_requested` が true なら `cancelled` に遷移し、`ジョブ <job_id> はキャンセルしました。` の文だけが通知されます。指定した `notify.body` は使いません。
 
 `runWorkerOnce` 自体は処理関数を中断しません。heartbeat を呼ばずに `complete` を送った場合、キャンセル要求があっても `done` になります。完了結果と完了通知が保存されるため、取消を反映するには処理関数が heartbeat の戻り値に従って `fail` を選ぶ必要があります。
@@ -133,6 +133,15 @@ API の 4xx は code と message を保持します。設定値、トークン�
 
 ## 長い通知を送る
 
-既定の完了文は、先頭の定型文を残し、全体を 1500 コードポイント以内に収めます。要約には最低 200 コードポイントを確保します。要約が短ければ全文を残します。成果物 URL は入る分だけ元の順序で並べます。1 本で入らない URL も省略対象です。省略した分は「ほか N 件の成果物 URL は結果に保存しました。」の 1 行で案内します。通知を短くしても `complete` は送り、結果と成果物 URL の全件を API に保存します。通知の長さを理由に処理を再実行しません。
+既定の完了文は、先頭の定型文を残し、全体を 1500 コードポイント以内に収めます。要約には最低 200 コードポイントを確保します。要約が短ければ全文を残します。成果物 URL は入る分だけ元の順序で並べます。1 本で入らない URL も省略対象です。省略した分は「ほか N 件の成果物 URL は /status J-… で確認できます。」の 1 行で案内します。通知を短くしても `complete` は送り、結果と成果物 URL の全件を API に保存します。通知の長さを理由に処理を再実行しません。
 
 独自の `notify.body` は `runWorkerOnce` と CLI で同じ関数を通します。返信用の記号を除去して 1500 コードポイント以内に切り、切った場合は戻り値または出力 JSON に `notify_truncated:true` を付けます。🧞‍♂️ や 🪔 だけで空になった本文は既定文に置き換え、`notify_replaced:true` を付けます。指定した本文がそのまま使われた場合、これらのフラグは付きません。
+
+
+成果物 `artifact_urls` は20件以内、1本1200コードポイント以内、空白・制御文字なしのHTTPS URLにしてください。APIのcomplete、CLI、runWorkerOnceは同じ規則を使います。CLIは不正入力を終了コード2で拒否します。APIは400で拒否します。runWorkerOnceはprocessの結果をcomplete前に検証し、不正ならcompleteを送らず、`fail` の `INVALID_REQUEST` にします。規則に違反した理由だけをerror.messageに保存し、URL本文は保存しません。結果も保存せず失敗として知らせます。fail成功後はleaseが切れても再キューされません。URLを黙って捨ててdoneにすることを避けるため、この方式を使います。
+
+成功したrunWorkerOnceとCLI completeは、通知本文に完全なURL行として載らなかった件数を `artifact_urls_omitted:N` で返します。0件なら省略します。独自notifyにも適用します。`--no-notify` は全URLが未掲載となります。`notify_truncated` と `notify_replaced` も成功時だけ返し、APIエラーや通信障害ではこれらのフラグと省略件数を返しません。
+
+チャットの利用者は元のトークで `/status <job_id> [ページ]` を送り、保存済みの成果物URLを確認できます。ページ省略は1です。doneの状態行の直後にURLを並べ、見出しと案内を含め1500コードポイント以内に分割します。URLは途中で切りません。続きは `/status J-000123 2` のように案内します。不正な番号はページ番号の説明、ページ外は有効範囲を返します。別の許可トークでは状態だけを返し、URLとページ案内は出しません。
+
+変更前に保存された長大URLが単独でも表示上限を超える場合は、短いURLでの再登録が必要な旨を返します。既存URLの自動変換はしません。

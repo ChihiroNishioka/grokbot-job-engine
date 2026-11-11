@@ -1,3 +1,4 @@
+import { artifactUrls } from '../lib/artifact-urls.js';
 import { z } from 'zod';
 import type { Config } from '../config/index.js';
 
@@ -25,7 +26,7 @@ export function schemas(config: Config) {
     claim:z.strictObject({worker_id:worker,lease_seconds:lease,job_types:z.array(jobType).optional()}),
     claimById:z.strictObject({worker_id:worker,lease_seconds:lease}),
     heartbeat:z.strictObject({claim_token:token,lease_seconds:lease}),
-    complete:z.strictObject({claim_token:token,result:z.record(z.string(),z.unknown()).refine(value=>[...JSON.stringify(value)].length<=config.RESULT_MAX_CHARS),artifact_urls:z.array(z.url().max(2048).refine(value=>new URL(value).protocol==='https:')).max(20).optional(),notify}),
+    complete:z.strictObject({claim_token:token,result:z.record(z.string(),z.unknown()).refine(value=>[...JSON.stringify(value)].length<=config.RESULT_MAX_CHARS),artifact_urls:artifactUrls.optional(),notify}),
     fail:z.strictObject({claim_token:token,error,notify:z.strictObject({body:chars(1,1500).optional()}).optional()}),
     reason,
     enqueue:z.strictObject({job_id:z.string().regex(/^J-\d{6,}$/),idempotency_key:z.string().regex(/^[A-Za-z0-9:._-]{1,128}$/),kind:z.enum(['ack','progress','done','failed','cancelled']),body:chars(1,1500)}),

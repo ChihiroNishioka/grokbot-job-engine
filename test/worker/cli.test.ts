@@ -133,9 +133,9 @@ test('fix1-10 CLI supplies completion and failure notifications unless --no-noti
     expect(bodies[4]).toMatchObject({ notify: { body: '独自の通知。' } });
     expect((await runWorkerCli(['complete', JSON.stringify({ ...complete, result: { summary: { private: 'detail' } } })], env, { transport })).exitCode).toBe(0);
     expect(bodies[5]).toMatchObject({ notify: { body: expect.stringContaining('結果を保存しました。') } });
-    const oversized = await runWorkerCli(['complete', JSON.stringify({ ...complete, artifact_urls: ['https://example.invalid/' + 'x'.repeat(1500)] })], env, { transport });
+    const oversized = await runWorkerCli(['complete', JSON.stringify({ ...complete, artifact_urls: ['https://example.invalid/' + 'x'.repeat(1176), 'https://example.invalid/' + 'y'.repeat(1176)] })], env, { transport });
     expect(oversized.exitCode).toBe(0);
-    expect(bodies.at(-1)).toMatchObject({ notify: { body: expect.stringContaining('ほか 1 件の成果物 URL は結果に保存しました。') } });
+    expect(bodies.at(-1)).toMatchObject({ notify: { body: expect.stringContaining('ほか 1 件の成果物 URL は /status J-000001 で確認できます。') } });
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -207,7 +207,7 @@ test.each(['complete', 'fail'])('fix2-6 CLI %s replaces empty formatted notifica
       else expect(requests.at(-1)?.notify).toEqual({});
     }
     if (verb === 'complete') {
-      const custom = await runWorkerCli([verb, JSON.stringify({ ...input, artifact_urls: ['https://example.invalid/' + 'x'.repeat(1500)], notify: { body: '🧞 独自本文' } })], env, { transport });
+      const custom = await runWorkerCli([verb, JSON.stringify({ ...input, artifact_urls: ['https://example.invalid/' + 'x'.repeat(1176), 'https://example.invalid/' + 'y'.repeat(1176)], notify: { body: '🧞 独自本文' } })], env, { transport });
       expect(custom.exitCode).toBe(0);
       expect(requests.at(-1)?.notify.body).toBe('独自本文');
     }

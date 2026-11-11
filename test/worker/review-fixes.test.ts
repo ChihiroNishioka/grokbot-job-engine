@@ -101,13 +101,13 @@ test('fix14 non-string summary uses fixed default and hides structured result', 
 test('G86 oversized artifacts complete with an omission notice', async () => {
   const { c, client } = worker();
   const id = job(await c.req('POST', '/jobs', input())).job_id;
-  const result = await runWorkerOnce({ client, claim: { worker_id: 'worker-a' }, process: async () => ({ result: { summary: 'ok' }, artifact_urls: ['https://example.invalid/' + 'x'.repeat(1500)] }) });
-  expect(result).toEqual({ outcome: 'done', job_id: id });
+  const result = await runWorkerOnce({ client, claim: { worker_id: 'worker-a' }, process: async () => ({ result: { summary: 'ok' }, artifact_urls: ['https://example.invalid/' + 'x'.repeat(1176), 'https://example.invalid/' + 'y'.repeat(1176)] }) });
+  expect(result).toEqual({ outcome: 'done', job_id: id, artifact_urls_omitted: 1 });
   expect(job(await c.req('GET', `/jobs/${id}`)).status).toBe('done');
 });
 
 test('fix4 oversized artifacts can complete with an explicit compact notification', async () => {
   const { c, client } = worker();
   await c.req('POST', '/jobs', input());
-  expect(await runWorkerOnce({ client, claim: { worker_id: 'worker-a' }, process: async () => ({ result: {}, artifact_urls: ['https://example.invalid/' + 'x'.repeat(1500)], notify: { body: '成果物を保存しました。' } }) })).toMatchObject({ outcome: 'done' });
+  expect(await runWorkerOnce({ client, claim: { worker_id: 'worker-a' }, process: async () => ({ result: {}, artifact_urls: ['https://example.invalid/' + 'x'.repeat(1176), 'https://example.invalid/' + 'y'.repeat(1176)], notify: { body: '成果物を保存しました。' } }) })).toMatchObject({ outcome: 'done' });
 });

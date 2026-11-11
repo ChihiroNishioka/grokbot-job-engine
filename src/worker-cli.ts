@@ -1,3 +1,4 @@
+import { artifactUrls, artifactOmissionFlags } from './lib/artifact-urls.js';
 import { readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -26,7 +27,7 @@ const commands = z.discriminatedUnion('command', [
   z.object({ command: z.literal('claim'), input: claim }),
   z.object({ command: z.literal('get'), input: z.strictObject({ job_id: id }) }),
   z.object({ command: z.literal('heartbeat'), input: z.strictObject({ ...tokenFields, lease_seconds: lease }) }),
-  z.object({ command: z.literal('complete'), input: z.strictObject({ ...tokenFields, result: z.record(z.string(), z.unknown()), artifact_urls: z.array(z.url().refine(value => new URL(value).protocol === 'https:')).max(20).optional(), notify }) }),
+  z.object({ command: z.literal('complete'), input: z.strictObject({ ...tokenFields, result: z.record(z.string(), z.unknown()), artifact_urls: artifactUrls.optional(), notify }) }),
   z.object({ command: z.literal('fail'), input: z.strictObject({ ...tokenFields, error: z.strictObject({ code: z.string().regex(/^[A-Z0-9_]{1,64}$/), message: z.string().refine(value => [...value].length <= 1000) }), notify }) }),
   z.object({ command: z.literal('outbox'), input: z.strictObject({ worker_id: worker, lease_seconds: lease, outbox_id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional() }) }),
 ]);
@@ -78,7 +79,7 @@ export async function runWorkerCli(argv: string[], env: NodeJS.ProcessEnv, deps:
   const client = new JobApiClient(deps.transport ?? createTailscaleNcTransport({ host: config.JOB_API_TAILNET_HOST, port: config.JOB_API_PORT, binary: config.TAILSCALE_BIN, timeoutMs: config.JOB_API_TIMEOUT_MS }), secret);
   try {
     let result;
-    let flags: NotificationFlags = {};
+    let flags: NotificationFlags & { artifact_urls_omitted?: number } = {};
     switch (command.command) {
       case 'claim': result = await client.claim(command.input); break;
       case 'get': result = await client.get(command.input.job_id); break;
@@ -88,7 +89,7 @@ export async function runWorkerCli(argv: string[], env: NodeJS.ProcessEnv, deps:
         const summary = typeof input.result.summary === 'string' ? input.result.summary : '結果を保存しました。';
         const prepared = noNotify ? undefined : prepareNotification(providedNotify?.body, () => completion(job_id, summary, input.artifact_urls));
         const notification = prepared ? { notify: { body: prepared.body } } : {};
-        flags = prepared?.flags ?? {};
+        flags = { ...prepared?.flags, ...artifactOmissionFlags(input.artifact_urls, prepared?.body) };
         result = await client.complete(job_id, { ...input, ...notification });
         break;
       }
@@ -103,7 +104,7 @@ export async function runWorkerCli(argv: string[], env: NodeJS.ProcessEnv, deps:
       case 'outbox': result = await client.outbox(command.input); break;
     }
     const exitCode = result.ok ? 0 : result.unreachable ? 3 : 4;
-    const output = JSON.stringify({ ...result, ...flags }, (_key, value: unknown) => typeof value === 'string' ? value.replaceAll(secret, '[REDACTED]') : value);
+    const output = JSON.stringify({ ...result, ...(result.ok ? flags : {}) }, (_key, value: unknown) => typeof value === 'string' ? value.replaceAll(secret, '[REDACTED]') : value);
     return { exitCode, output: output + '\n' };
   } catch {
     return { exitCode: 4, output: JSON.stringify({ ok: false, error: 'CLIENT_ERROR' }) + '\n' };

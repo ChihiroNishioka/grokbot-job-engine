@@ -258,7 +258,7 @@ CREATE INDEX outbox_lease_idx  ON delivery_outbox(status, lease_expires_at);
 | worker_id | `^[A-Za-z0-9._:-]{1,64}$` |
 | lease_seconds | 10〜LEASE_SECONDS_MAX |
 | result | JSON 化したときに RESULT_MAX_CHARS 字以内 |
-| artifact_urls | 20 件以内。それぞれ https で 2048 字以内 |
+| artifact_urls | 20 件以内。それぞれ HTTPS で1200コードポイント以内。空白・制御文字不可 |
 | error.code | `^[A-Z0-9_]{1,64}$` |
 | error.message | 1000 字以内。保存の前にマスクする |
 | outbox の kind | 表の enum |
@@ -451,11 +451,12 @@ interface WakeDispatcher { wake(): Promise<WakeResult> }
 | コマンド | 動き | 返信（outbox kind=`command`、キー `cmd:<guid>`） |
 |---|---|---|
 | `/help` | なし | 使い方の一覧 |
-| `/status J-000123` | 何も変えない | ジョブ ID、状態（日本語: 受付済み / 実行中 / 完了 / 失敗 / キャンセル済み）、試行回数、キャンセル要求の有無 |
+| `/status J-000123 [ページ]` | 何も変えない | ジョブ ID、状態（日本語: 受付済み / 実行中 / 完了 / 失敗 / キャンセル済み）、試行回数、キャンセル要求の有無 |
 | `/cancel J-000123` | 6 章の cancel と同じ | 結果 |
 | `/retry J-000123` | 6 章の retry と同じ | 結果（上限ならジョブ ID、試行回数、上限回数を添え「/retry はできません。」） |
 
-- ジョブ単位のアクセス制御: コマンドで触れるのは、source_chat_id がそのメッセージの chat_id と同じジョブだけ。違うトークのジョブと存在しないジョブは、どちらも「ジョブが見つかりません。」と返す（存在を漏らさない）。
+- `/status <job_id> [ページ]` はページ省略時に1を使う。元トーク（source_chat_id とメッセージの chat_id が一致）では done の artifact_urls を状態行の直後に並べる。URLは途中で切らず、見出し・試行回数・案内を含め1通1500コードポイント以内に分割する。続きがあれば `/status J-000123 2` のように次ページを案内する。URLなしも1ページ。0・負数・小数・文字列・安全な整数の範囲外はページ番号の説明、存在しないページは有効範囲を返す。
+- 別の許可トークからの `/status` は状態情報だけを返す。URL・ページ数・次ページ案内は出さない。`/cancel` と `/retry` は元トークだけが操作でき、別トークと存在しないジョブには「ジョブが見つかりません。」を返す。
 - 既知の管理コマンドで形が違う（ID なし、不正な ID）場合は `/help` と同じ返信に「コマンドを読めませんでした。」を付ける。未知のスラッシュで始まる依頼は通常のジョブにする。
 - 応答は 200 `{status:"command", command}`。
 
@@ -496,14 +497,14 @@ Genie の `HTTPReplySource`（Sources/GenieCore/ReplySource.swift）の形に合
   - `tailscale` が見つからない（ENOENT）→ `reason:"nc_not_found"`
   - 接続できない（応答が来ないまま子プロセスが終わる）→ `reason:"connect_failed"`
   - 時間切れ（既定 15 秒。子プロセスを止める）→ `reason:"timeout"`
-- Worker の 1 回分（`runWorkerOnce`）: claim → 処理 → complete / fail。どの段階で届かなくなっても、何も書かずに `outcome:"unreachable"` で終わる。claim 済みなら lease が切れたあと Reconciler が queued に戻し、Dispatcher を配線した後は、起こし直したときに再開する（at-least-once）。処理関数の例外だけを fail にする。
+- Worker の 1 回分（`runWorkerOnce`）: claim → 処理 → complete / fail。どの段階で届かなくなっても、何も書かずに `outcome:"unreachable"` で終わる。claim 済みなら lease が切れたあと Reconciler が queued に戻し、Dispatcher を配線した後は、起こし直したときに再開する（at-least-once）。処理関数の失敗・例外と不正な成果物 URL を fail にする。
 - CLI（`node dist/worker-cli.js <claim|get|heartbeat|complete|fail|outbox> [JSON|-]`）を Routine から Shell で呼べるようにする。トークンは `JOB_API_TOKEN_FILE`（600 のファイル）から読み、引数や出力に出さない。終了コード: 0 成功、3 届かない、4 API のエラー、2 使い方の誤り。出力は JSON 1 行。
 - 設定（Worker 側）: `JOB_API_TAILNET_HOST`、`JOB_API_PORT`、`JOB_API_TOKEN_FILE`、`TAILSCALE_BIN`（既定 `tailscale`）、`JOB_API_TIMEOUT_MS`（既定 15000）。値はリポジトリに書かない。
 - 手順と理由は `docs/worker.md` に書く。実際の tailscale の設定変更や tailscaled の再起動はしない。
 
 ### 13.7 レビュー修正で確定した契約
 
-- 完了文は先頭の定型文と要約最低200コードポイント（短ければ全文）を確保し、URLは入るだけ順に並べ、1500コードポイント以内にする。入らないURLは切らず「ほか N 件の成果物 URL は結果に保存しました。」の1行にまとめる。summary が文字列でなければ「結果を保存しました。」。結果とURLは全件をcompleteで保存し、通知の長さを理由に再実行しない。
+- 完了文は先頭の定型文と要約最低200コードポイント（短ければ全文）を確保し、URLは入るだけ順に並べ、1500コードポイント以内にする。入らないURLは切らず「ほか N 件の成果物 URL は /status J-… で確認できます。」の1行にまとめる。summary が文字列でなければ「結果を保存しました。」。結果とURLは全件をcompleteで保存し、通知の長さを理由に再実行しない。
 - 失敗文の原因は error.code から作る固定文。PROCESSING_ERROR と未知コードは「処理中にエラーが起きました」、LEASE_EXPIRED_MAX_ATTEMPTS は「実行期限切れが再試行の上限に達しました」。生の例外 message はマスクして error に保存するだけ。
 - fail が cancelled になったら kind=cancelled、本文は「ジョブ J-… はキャンセルしました。」。/retry を案内しない。
 - /help は各コマンドに説明を付ける。不正な既知コマンドは「コマンドを読めませんでした。」と使い方。見つからない場合は「ジョブが見つかりません。」。cancel は「キャンセルしました。」か「キャンセルを受け付けました。実行中の処理が止まるのを待っています。」。retry は「再実行を受け付けました。」と状態。
@@ -516,3 +517,7 @@ Genie の `HTTPReplySource`（Sources/GenieCore/ReplySource.swift）の形に合
 - 独自の notify.body は Worker と CLI で同じ関数を通し、返信用記号を除去後1500コードポイントに切る。切った場合は戻り値とCLI出力JSONのトップレベルに `notify_truncated:true`、記号だけで空になり既定文へ戻した場合は `notify_replaced:true`。通常はフラグを省略する。`--no-notify` では変換も通知もしない。
 - CLIのJSON引数 `-` は標準入力をEOFまで読む。上限1MiB（バイト数）、超過は終了コード2のUSAGE_ERROR / STDIN_TOO_LARGE。不正JSONは同じ形式のBAD_JSON。入力本文や値はエラーに含めない。
 - Workerのheartbeat()がtrueを返したら、処理関数は処理を止めて `{ok:false,code:"PROCESSING_ERROR"}` を返す。CLIもcancel_requested:trueを確認したら同じコードでfailを送る。cancel_requestedのあるfailはcancelledとなり、notify.bodyは固定のキャンセル文に置き換える。heartbeatを呼ばずcompleteを送ればキャンセル要求があってもdoneになる。
+
+- artifact_urls は API complete・CLI・runWorkerOnce で同じスキーマを使う。20件以内、各1200コードポイント以内、空白・制御文字なしの HTTPS URL。runWorkerOnce は process の返却後、complete 前に検証し、不正なら complete を送らず fail の INVALID_REQUEST にする。error.message に規則だけを残し、URL本文は残さない。結果は保存せず、失敗として明示する。fail 成功後は lease 失効でも再キューされない。CLI は不正入力を終了コード2、APIは400で拒否する。
+- 成功した Worker と CLI complete の戻り値に artifact_urls_omitted を付ける。通知本文の独立した行として完全な形で載らなかった URL の件数で、0なら省略する。独自notifyにも適用し、CLIの --no-notify は全件が未掲載となる。notify_truncated / notify_replaced / artifact_urls_omitted は成功時だけ付け、失敗・通信障害には付けない。
+- 変更前に保存された長大URLは自動変換しない。単独でも見出しと案内を含め1500に入らない既存URLがあれば、/status は表示上限と短いURLでの再登録が必要な旨を返し、URLを途中で切らない。

@@ -8,7 +8,7 @@ Job Store、Job API、Genie 用 Ingress と返信取得、Reconciler、Worker �
 
 HTTP のテストは Hono の `app.request()` を使い、サーバーの待ち受けは実行していません。DB は一時ファイルとメモリ上で確認しています。
 
-Transport は偽の spawn のみで確認しています。EOF で終了する偽の子プロセスを使った 1 往復と、標準入力を EOF にせず Content-Length または chunked の終端まで応答を読む動作を検証しています。実際の tailscale nc は未実行です。Genie との実配送は未実行です。これらの経路は実機で未確認です。
+Transport は偽の spawn のみで確認しています。EOF で終了する偽の子プロセスを使った 1 往復と、標準入力を EOF にせず Content-Length または chunked の終端まで応答を読む動作を検証しています。実際の tailscale nc と IPv6 の実通信、Genie 経由の /status の実配送は実機で未確認です。実プロセスの stdin は box で確認済みです。URLページングと元トークの表示制限は app.request() による確認であり、Messages への配送確認は含みません。
 
 GitHub Actions は private リポジトリで runner が起動しないため、box の通常シェルで同じ手順を実行しています。手順は `npm run lint`、`npm run typecheck`、`npm test`、`npm run check:secrets`、`npm run build` です。実行ごとの結果は Git 管理外の `.runs/` に記録します。
 

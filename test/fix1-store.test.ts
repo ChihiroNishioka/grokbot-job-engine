@@ -70,7 +70,7 @@ it('fix1-11 notification insertion failure rolls back reconciled job and run', (
 it('fix1-12 command replies explain help and cancel retry outcomes', async () => {
  const { c, store, id, claim } = fixture(); try {
   const send = async (text: string, guid: string) => { await c.request('/ingress/genie', payload({ text, guid, idempotency_key: guid })); return c.table('delivery_outbox').at(-1)?.body; };
-  expect(await send('/help', 'help')).toContain('/status <job_id>：状態を確認します。');
+  expect(await send('/help', 'help')).toContain('/status <job_id> [ページ]：状態と成果物 URL を確認します。');
   expect(await send('/status J-999999', 'missing')).toBe('ジョブが見つかりません。');
   const run = claim(); expect(await send(`/cancel ${id}`, 'cancel')).toContain('キャンセルを受け付けました。実行中の処理が止まるのを待っています。');
   store.fail(id, { claim_token: run.claim_token, error: { code: 'DUMMY', message: '' } });

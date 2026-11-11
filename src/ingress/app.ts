@@ -1,3 +1,4 @@
+import { statusReply } from './status-text.js';
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod';
@@ -17,11 +18,17 @@ const payloadSchema=z.strictObject({v:z.literal(1),event:z.literal('message'),id
 type Payload=z.infer<typeof payloadSchema>;
 type Command='help'|'status'|'cancel'|'retry';
 type Receipt={guid:string;chat_id:number;kind:'job'|'command'|'ignored';job_id:string|null;outbox_id:number|null;command:Command|'too_long'|null};
-const help='/help：使い方を表示します。\n/status <job_id>：状態を確認します。\n/cancel <job_id>：キャンセルします。\n/retry <job_id>：失敗したジョブを再実行します。';
+const help='/help：使い方を表示します。\n/status <job_id> [ページ]：状態と成果物 URL を確認します。\n/cancel <job_id>：キャンセルします。\n/retry <job_id>：失敗したジョブを再実行します。';
 const statusText={queued:'受付済み',claimed:'実行中',done:'完了',failed:'失敗',cancelled:'キャンセル済み'};
-function parseCommand(text:string):{command:Command;id?:string;invalid:boolean} {
+function parseCommand(text:string):{command:Command;id?:string;page?:number;pageInvalid?:boolean;invalid:boolean} {
  text=text.trim();
  if(text==='/help')return {command:'help',invalid:false};
+ const status=/^\/status\s+(J-\d{6,})(?:\s+(.+))?$/s.exec(text);
+ if(status){
+  const raw=status[2];
+  const page=raw===undefined?1:Number(raw);
+  return {command:'status',id:status[1],page,invalid:false,pageInvalid:raw!==undefined&&(!/^[1-9]\d*$/.test(raw)||!Number.isSafeInteger(page))};
+ }
  const match=/^\/(status|cancel|retry)\s+(J-\d{6,})$/.exec(text);
  const name=match?.[1];
  if((name==='status'||name==='cancel'||name==='retry')&&match?.[2])return {command:name,id:match[2],invalid:false};
@@ -33,6 +40,11 @@ function executeCommand(deps:AppDeps,chat:number,text:string):{command:Command;j
  const store=new JobStore(deps);
  let job:Job;
  try {job=store.get(parsed.id??'');}catch(error){if(error instanceof StoreError&&error.code==='JOB_NOT_FOUND')return {command:parsed.command,job_id:null,text:'ジョブが見つかりません。'};throw error;}
+ if(parsed.command==='status'){
+  if(parsed.pageInvalid)return {command:'status',job_id:job.job_id,text:`ページ番号は1以上の整数で指定してください。\n/status ${job.job_id} [ページ]`};
+  const own=job.source_chat_id===String(chat);
+  return {command:'status',job_id:job.job_id,text:statusReply(job,own,own?parsed.page:1)};
+ }
  if(job.source_chat_id!==String(chat))return {command:parsed.command,job_id:null,text:'ジョブが見つかりません。'};
  try {
   if(parsed.command==='cancel')job=store.cancel(job.job_id).job;

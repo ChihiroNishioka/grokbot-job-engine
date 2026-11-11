@@ -3,7 +3,7 @@ export function completion(id: string, summary: string, urls: string[] = []): st
   const prefix = `ジョブ ${id} が完了しました。\n\n結果：\n`;
   const reservedSummary = Math.min(200, [...summary].length);
   const selected: string[] = [];
-  const omittedLine = (count: number) => count > 0 ? `\n\nほか ${count} 件の成果物 URL は結果に保存しました。` : '';
+  const omittedLine = (count: number) => count > 0 ? `\n\nほか ${count} 件の成果物 URL は /status ${id} で確認できます。` : '';
   const artifacts = () => selected.length ? '\n\n成果物：\n' + selected.join('\n') : '';
   for (const url of urls) {
     selected.push(url);

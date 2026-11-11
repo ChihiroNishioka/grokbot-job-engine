@@ -12,7 +12,7 @@ test('fix2 docs Genie setup names the prerequisite PR and dedicated job settings
 
 test('fix2 docs verification status has one source and README starts with its introduction', () => {
   const status = existsSync('docs/status.md') ? readFileSync('docs/status.md', 'utf8') : '';
-  for (const required of ['main.ts は Dispatcher を起動しません', '偽の spawn', 'EOF', '実際の tailscale nc は未実行', 'Genie との実配送は未実行', 'GitHub Actions', 'private', 'runner', 'box の通常シェル', '同じ手順']) expect(status).toContain(required);
+  for (const required of ['main.ts は Dispatcher を起動しません', '偽の spawn', 'EOF', '実際の tailscale nc と IPv6 の実通信', 'Genie 経由の /status の実配送は実機で未確認', '実プロセスの stdin は box で確認済み', 'GitHub Actions', 'private', 'runner', 'box の通常シェル', '同じ手順']) expect(status).toContain(required);
   for (const path of ['README.md', 'docs/worker.md', 'docs/genie.md']) {
     const text = readFileSync(path, 'utf8');
     expect(text, path).toMatch(/\[[^\]]+\]\((?:docs\/)?status\.md\)/);
