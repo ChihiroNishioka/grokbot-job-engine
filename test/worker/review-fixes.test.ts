@@ -29,7 +29,7 @@ test('fix4 completion reserves artifacts and fixed text before trimming summary'
 test('fix5 failure maps codes to safe fixed explanations', () => {
   expect(failure('J-000001', '/private/internal.sqlite SELECT secret', { canRetry: true, maxAttempts: 3 })).toContain('原因：\n処理中にエラーが起きました');
   expect(failure('J-000001', '/private/internal.sqlite SELECT secret', { canRetry: true, maxAttempts: 3 })).not.toContain('internal.sqlite');
-  expect(failure('J-000001', 'LEASE_EXPIRED_MAX_ATTEMPTS', { canRetry: false, maxAttempts: 3 })).toContain('実行期限切れが再試行の上限に達しました');
+  expect(failure('J-000001', 'LEASE_EXPIRED_MAX_ATTEMPTS', { canRetry: false, maxAttempts: 3 })).toContain('試行の上限に達し、実行期限が切れました');
 });
 
 test('fix5 processor exception is masked in storage and never echoed to user', async () => {

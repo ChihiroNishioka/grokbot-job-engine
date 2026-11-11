@@ -37,7 +37,7 @@ claim、heartbeat、complete、fail のいずれかが届かなければ `outcom
 | `INVALID_ARTIFACT` | 処理結果の成果物 URL が規則に合いませんでした |
 | `PERMISSION_REQUIRED` | 処理に必要な権限がありません |
 | `PROCESSING_ERROR` | 処理中にエラーが起きました |
-| `LEASE_EXPIRED_MAX_ATTEMPTS` | 実行期限切れが再試行の上限に達しました |
+| `LEASE_EXPIRED_MAX_ATTEMPTS` | 試行の上限に達し、実行期限が切れました |
 
 CLI の `fail` は入力に試行回数を持たないため、既定文をサーバーに生成させます。API には `notify:{}` を送り、Job Store が保存済みの試行回数を使います。`--no-notify` では `notify` 自体を送らず、通知を作りません。
 

@@ -506,7 +506,7 @@ Genie の `HTTPReplySource`（Sources/GenieCore/ReplySource.swift）の形に合
 ### 13.7 レビュー修正で確定した契約
 
 - 完了文は先頭の定型文と要約最低200コードポイント（短ければ全文）を確保し、URLは入るだけ順に並べ、1500コードポイント以内にする。入らないURLは切らず「ほか N 件の成果物 URL は /status J-… で確認できます。」の1行にまとめる。summary が文字列でなければ「結果を保存しました。」。結果とURLは全件をcompleteで保存し、通知の長さを理由に再実行しない。
-- 失敗文の原因は error.code から作る固定文。INVALID_ARTIFACT は「処理結果の成果物 URL が規則に合いませんでした」で、試行回数によらず再実行を案内せず処理側の修正が必要な理由を伝える。PROCESSING_ERROR と未知コードは「処理中にエラーが起きました」、LEASE_EXPIRED_MAX_ATTEMPTS は「実行期限切れが再試行の上限に達しました」。生の例外 message はマスクして error に保存するだけ。
+- 失敗文の原因は error.code から作る固定文。INVALID_ARTIFACT は「処理結果の成果物 URL が規則に合いませんでした」で、試行回数によらず再実行を案内せず処理側の修正が必要な理由を伝える。PROCESSING_ERROR と未知コードは「処理中にエラーが起きました」、LEASE_EXPIRED_MAX_ATTEMPTS は「試行の上限に達し、実行期限が切れました」。生の例外 message はマスクして error に保存するだけ。
 - fail が cancelled になったら kind=cancelled、本文は「ジョブ J-… はキャンセルしました。」。/retry を案内しない。
 - /help は各コマンドに説明を付ける。不正な既知コマンドは「コマンドを読めませんでした。」と使い方。見つからない場合は「ジョブが見つかりません。」。cancel は「キャンセルしました。」か「キャンセルを受け付けました。実行中の処理が止まるのを待っています。」。retry は「再実行を受け付けました。」と状態。
 - lease 切れで failed / cancelled にする Genie 経由のジョブ（既存 channel=genie の outbox があるもの）は、同じトランザクションで kind=failed / cancelled の outbox を作る。キーは12.8と同じ試行ごとの形式。
