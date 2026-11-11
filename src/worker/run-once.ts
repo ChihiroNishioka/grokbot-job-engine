@@ -35,7 +35,7 @@ export async function runWorkerOnce({ client, claim, process }: { client: JobApi
   }
   if (heartbeatState.failure) return failedResult(heartbeatState.failure);
   if (result.ok !== false && !artifactUrls.safeParse(result.artifact_urls ?? []).success) {
-    result = { ok: false, code: 'INVALID_REQUEST', message: 'artifact_urls は20件以内、各1200コードポイント以内の HTTPS URL が必要です。' };
+    result = { ok: false, code: 'INVALID_ARTIFACT', message: 'artifact_urls は20件以内、各1200コードポイント以内の HTTPS URL が必要です。' };
   }
   if (result.ok === false) {
     const message = [...mask(result.message ?? '')].slice(0, 1000).join('');

@@ -17,6 +17,7 @@ export const failureReasons = {
   TIMEOUT: '処理が時間切れになりました',
   SOURCE_UNAVAILABLE: '参照先を利用できません',
   INVALID_REQUEST: '依頼の内容を確認してください',
+  INVALID_ARTIFACT: '処理結果の成果物 URL が規則に合いませんでした',
   PERMISSION_REQUIRED: '処理に必要な権限がありません',
   PROCESSING_ERROR: '処理中にエラーが起きました',
   LEASE_EXPIRED_MAX_ATTEMPTS: '実行期限切れが再試行の上限に達しました',
@@ -24,6 +25,6 @@ export const failureReasons = {
 export type FailureCode = keyof typeof failureReasons;
 export function failure(id: string, code: string, retry: { canRetry: boolean; maxAttempts: number }): string {
   const reason = Object.entries(failureReasons).find(([key]) => key === code)?.[1] ?? failureReasons.PROCESSING_ERROR;
-  const action = retry.canRetry ? `再実行する場合：\n/retry ${id}` : `再実行の上限（${retry.maxAttempts} 回）に達したため、/retry はできません。`;
+  const action = code === 'INVALID_ARTIFACT' ? '同じ処理を再実行しても成果物 URL の規則違反は直らないため、処理側の修正が必要です。' : retry.canRetry ? `再実行する場合：\n/retry ${id}` : `再実行の上限（${retry.maxAttempts} 回）に達したため、/retry はできません。`;
   return `ジョブ ${id} の処理に失敗しました。\n\n原因：\n${reason}\n\n${action}`;
 }

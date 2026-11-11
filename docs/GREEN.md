@@ -154,7 +154,7 @@
 | G64 | 同じ guid を 3 回送る（Promise.all を含む）と、ジョブ・ack・ingress_messages はどれも 1 行で、2 回目以降は同じ job_id を返す | **8** | `test/ingress/genie.test.ts` |
 | G65 | 許可外の chat_id は 403 で行が増えない。sender_is_me=false は ignored で行が増えない（ingress_messages の ignored は可） | 13 | `test/ingress/genie.test.ts` |
 | G66 | 本文が `🧞‍♂️ 完了しました`、`🪔 🧞‍♂️ …`、`🧞 …`、先頭に空白のある `  🧞‍♂️…` は ignored（bot_reply）でジョブも outbox も作らない。空や 🪔 だけは ignored（empty） | **14** | `test/ingress/loop.test.ts` |
-| G67 | `/status`、`/cancel`、`/retry`、`/help` がそれぞれ 13.3 どおりに動き、command の outbox（キー `cmd:<guid>`）が 1 行できる。同じ guid の再送で再実行されない。cancel/retry は別の chat と存在しないジョブに同じ「見つかりません」。status は別の許可トークへ状態だけを返す | 7, **15** | `test/ingress/commands.test.ts` |
+| G67 | `/status`、`/cancel`、`/retry`、`/help` がそれぞれ 13.3 どおりに動き、command の outbox（キー `cmd:<guid>`）が 1 行できる。同じ guid の再送で再実行されない。status/cancel/retry は別の chat と存在しないジョブに同じ「ジョブが見つかりません。」を返し、存在を漏らさない | 7, **15** | `test/ingress/commands.test.ts` |
 | G68 | `GET /genie/replies`（cursor なし）が pending の genie 行を昇順で、13.5 の形（id `je-<n>`、chat_id 数値、in_reply_to_guid、created_at）で返し、cursor が最後の `o:<n>`。同じ cursor で取り直すと同じ内容。page の上限を超える分は次のページ | 2, 6（モック） | `test/ingress/replies.test.ts` |
 | G69 | `cursor=o:N` で取ると N 以下の pending の genie 行が sent（external_ref `genie:cursor`、event あり）になり、返事に出ない。ジョブの行は全列そのまま。形の違う cursor は 400。genie 以外の channel の行は出ない。`/outbox/claim` は genie の行を取らない | **12** | `test/ingress/replies.test.ts` |
 | G70 | 受付 → claim → complete（notify）→ 返事の取得で、同じ guid に ack と done の 2 件が別の id で出る | 6（モック） | `test/scenario/genie-flow.test.ts` |
@@ -169,7 +169,7 @@
 |---|---|---|
 | G75 | EOFで終了する偽ncでも応答を読み切り、長さ/chunked終端でkillする。close時も完全な応答は成功。不完全応答は失敗 | test/worker/tailscale-nc.test.ts |
 | G76 | retry後の同種通知は異なる試行キーになり、同じ試行の再送は増えない。terminalWithoutOutboxは最後の試行で判定する | test/fix1-store.test.ts |
-| G77 | 完了文の固定文と要約最低200コードポイントを確保し、入るURLを順に載せ1500コードポイント以内。残りURLは省略件数を案内し、全件を結果に保存して完了する。失敗原因はコード別の固定文、生messageはマスク保存だけ | test/worker/review-fixes.test.ts |
+| G77 | 完了文の固定文と要約最低200コードポイントを確保し、入るURLを順に載せ1500コードポイント以内。残りURLは「ほか N 件の成果物 URL は /status J-… で確認できます。」と案内し、結果とURL全件を保存して完了する。失敗原因はコード別の固定文、生messageはマスク保存だけ | test/worker/review-fixes.test.ts |
 | G78 | fail取消時はcancelled通知のみ。lease切れのGenie由来failed/cancelledは同じトランザクションで試行別通知を作り再送は冪等 | test/fix1-store.test.ts |
 | G79 | 既知の管理コマンドだけを判定し前後空白を許す。未知のスラッシュ依頼はジョブ。help/見つからない/cancel/retryは13.7の文面 | test/fix1-store.test.ts |
 | G80 | 長すぎる依頼は200 rejected/too_long、cmd:guidの説明返信が1件だけ | test/fix1-store.test.ts |
@@ -194,8 +194,8 @@
 | ID | 条件 | テスト |
 |---|---|---|
 | G90 | 完了通知の省略行は件数・ジョブID・/statusでの確認方法を含む。1500コードポイントと最低200字の要約を維持 | test/worker/urlstatus.test.ts の G90 |
-| G91 | doneのURLは元トークだけに状態行のあとで表示。全20件をURLごとに切らず1500以内に分割し次ページを案内。短いURLは同じページ。URLなしは1ページ。別の許可トークは状態のみ、cancel/retryは拒否。再送は冪等。旧長大URLは上限を説明し切らない | test/worker/urlstatus.test.ts の G91 |
+| G91 | doneのURLは元トークだけに状態行のあとで表示。全20件をURLごとに切らず1500以内に分割し次ページを案内。短いURLは同じページ。URLなしは1ページ。別の許可トークは存在しないIDと同じ返事で存在・状態を漏らさず、不正なページ番号でも同じ。cancel/retryも拒否。再送は冪等。旧長大URLは上限を説明し切らない | test/worker/urlstatus.test.ts の G91 |
 | G92 | /status job_id [ページ] は省略時1。不正な番号と安全な整数の範囲外はページ番号の説明、ページ外は有効範囲を返す。helpにも構文を記載 | test/worker/urlstatus.test.ts の G91・G92 |
 | G93 | API completeとCLIはHTTPS・各1200コードポイント以内・20件以内・空白と制御文字不可の共有規則。境界1200を受理、1201を拒否 | test/worker/urlstatus.test.ts の G93 |
-| G94 | processの不正URLはcomplete前にfail INVALID_REQUEST、理由だけ保存。completeを呼ばず、lease切れと次回実行でも再処理しない | test/worker/urlstatus.test.ts の G94 |
+| G94 | processの不正URLはcomplete前にfail INVALID_ARTIFACT、理由だけ保存。原因は「処理結果の成果物 URL が規則に合いませんでした」。試行残数によらず/retryを案内せず、処理側の修正が必要な理由を伝える。WorkerとCLI failのnotify:{}によるサーバー既定文で同じ規則。completeを呼ばず、lease切れと次回実行でも再処理しない | test/worker/urlstatus.test.ts の G94 |
 | G95 | Worker/CLI成功時は未掲載URL件数を返す。独自notifyとno-notifyにも適用。失敗時はnotify_*と省略件数を付けない | test/worker/urlstatus.test.ts の G95 |

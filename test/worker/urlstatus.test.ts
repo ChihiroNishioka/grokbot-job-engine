@@ -64,7 +64,8 @@ test('G91 status pages deliver all whole URLs only to the original chat, with id
   }
   expect(found).toEqual(urls);
   const foreign = await f.command(`/status ${f.id}`, 22);
-  expect(foreign).toContain('状態：完了'); expect(foreign).not.toContain('https://'); expect(foreign).not.toContain('成果物');
+  expect(foreign).toBe(await f.command('/status J-999999', 22));
+  expect(foreign).toBe('ジョブが見つかりません。');
   for (const cmd of ['cancel', 'retry']) expect(await f.command(`/${cmd} ${f.id}`, 22)).toBe('ジョブが見つかりません。');
   expect(await f.command('/help')).toContain('/status <job_id> [ページ]');
   expect(await f.command(`/status ${f.id} 21`)).toContain('ページがありません');
@@ -94,7 +95,10 @@ test.each([url(1201), 'http://example.invalid/file', 'not-a-url', 'https://examp
   const process = async () => { calls++; return { result: {}, artifact_urls: [invalid] }; };
   expect(await runWorkerOnce({ client: f.client, claim: { worker_id: 'worker', lease_seconds: 10 }, process })).toMatchObject({ outcome: 'failed' });
   const job = new JobStore(f.c).get(f.id);
-  expect(job.status).toBe('failed'); expect(JSON.parse(job.error ?? '{}')).toMatchObject({ code: 'INVALID_REQUEST', message: expect.stringContaining('artifact_urls') });
+  expect(job.status).toBe('failed'); expect(JSON.parse(job.error ?? '{}')).toMatchObject({ code: 'INVALID_ARTIFACT', message: expect.stringContaining('artifact_urls') });
+  const notification = f.c.table('delivery_outbox').find(row => row.kind === 'failed')?.body;
+  expect(notification).toBe(`ジョブ ${f.id} の処理に失敗しました。\n\n原因：\n処理結果の成果物 URL が規則に合いませんでした\n\n同じ処理を再実行しても成果物 URL の規則違反は直らないため、処理側の修正が必要です。`);
+  expect(notification).not.toContain('/retry');
   expect(f.paths.filter(path => path.endsWith('/complete'))).toHaveLength(0);
   expect(f.paths.filter(path => path.endsWith('/fail'))).toHaveLength(1);
   f.c.clock.advance(10001); reconcile(f.c, { queuedStaleMs: 0, outboxStaleMs: 0 });
@@ -118,12 +122,15 @@ test('G95 CLI reports omissions only on success and never marks failed notificat
   }
 });
 
-test('G91 status without done artifacts stays one page and a foreign page reveals no count', async () => {
+test('G91 status without done artifacts stays one page and foreign pages hide job existence', async () => {
   const f = await fixture();
   expect(await f.command(`/status ${f.id}`)).not.toContain('成果物');
   expect(await f.command(`/status ${f.id} 2`)).toContain('ページがありません');
-  expect(await f.command(`/status ${f.id} 999`, 22)).toContain('状態：受付済み');
-  expect(await f.command(`/status ${f.id} 999`, 22)).not.toContain('ページ');
+  for (const value of ['', ' 999', ' 0', ' abc']) {
+    const missing = await f.command(`/status J-999999${value}`, 22);
+    expect(await f.command(`/status ${f.id}${value}`, 22)).toBe(missing);
+    expect(missing).toBe('ジョブが見つかりません。');
+  }
   await runWorkerOnce({ client: f.client, claim: { worker_id: 'worker' }, process: async () => ({ result: {}, artifact_urls: [] }) });
   expect(await f.command(`/status ${f.id}`)).toContain('状態：完了');
   expect(await f.command(`/status ${f.id}`)).not.toContain('成果物');
@@ -159,4 +166,25 @@ test('G95 omission counts reflect custom notifications and no-notify with no fal
   const result = await runWorkerCli(['complete', JSON.stringify(args), '--no-notify'], cliEnv(), { transport: g.transport });
   expect(JSON.parse(result.output)).toMatchObject({ ok: true, artifact_urls_omitted: 2 });
   expect(g.c.table('delivery_outbox').filter(row => row.kind === 'done')).toHaveLength(0);
+});
+
+
+test.each([1, 3])('G94 CLI fail INVALID_ARTIFACT uses the same safe default as Worker with max_attempts %i', async maxAttempts => {
+  const f = await fixture();
+  f.c.db.prepare('UPDATE jobs SET max_attempts=? WHERE job_id=?').run(maxAttempts, f.id);
+  const claimed = await f.client.claim({ worker_id: 'worker' });
+  if (!claimed.ok || !claimed.data.job) throw Error('claim missing');
+  const sent: unknown[] = [];
+  const transport: Transport = { async request(request) {
+    if (request.path.endsWith('/fail')) sent.push(JSON.parse(request.body ?? '{}'));
+    return f.transport.request(request);
+  } };
+  const args = { job_id: f.id, claim_token: claimed.data.claim_token, error: { code: 'INVALID_ARTIFACT', message: 'internal diagnostic' } };
+  const result = await runWorkerCli(['fail', JSON.stringify(args)], cliEnv(), { transport });
+  expect(result.exitCode).toBe(0);
+  expect(sent).toEqual([expect.objectContaining({ notify: {} })]);
+  const notification = f.c.table('delivery_outbox').find(row => row.kind === 'failed')?.body;
+  expect(notification).toBe(`ジョブ ${f.id} の処理に失敗しました。\n\n原因：\n処理結果の成果物 URL が規則に合いませんでした\n\n同じ処理を再実行しても成果物 URL の規則違反は直らないため、処理側の修正が必要です。`);
+  expect(notification).not.toContain('/retry');
+  expect(notification).not.toContain('internal diagnostic');
 });

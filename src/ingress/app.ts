@@ -40,12 +40,11 @@ function executeCommand(deps:AppDeps,chat:number,text:string):{command:Command;j
  const store=new JobStore(deps);
  let job:Job;
  try {job=store.get(parsed.id??'');}catch(error){if(error instanceof StoreError&&error.code==='JOB_NOT_FOUND')return {command:parsed.command,job_id:null,text:'ジョブが見つかりません。'};throw error;}
+ if(job.source_chat_id!==String(chat))return {command:parsed.command,job_id:null,text:'ジョブが見つかりません。'};
  if(parsed.command==='status'){
   if(parsed.pageInvalid)return {command:'status',job_id:job.job_id,text:`ページ番号は1以上の整数で指定してください。\n/status ${job.job_id} [ページ]`};
-  const own=job.source_chat_id===String(chat);
-  return {command:'status',job_id:job.job_id,text:statusReply(job,own,own?parsed.page:1)};
+  return {command:'status',job_id:job.job_id,text:statusReply(job,true,parsed.page)};
  }
- if(job.source_chat_id!==String(chat))return {command:parsed.command,job_id:null,text:'ジョブが見つかりません。'};
  try {
   if(parsed.command==='cancel')job=store.cancel(job.job_id).job;
   if(parsed.command==='retry')job=store.retry(job.job_id).job;

@@ -34,13 +34,14 @@ claim、heartbeat、complete、fail のいずれかが届かなければ `outcom
 | `TIMEOUT` | 処理が時間切れになりました |
 | `SOURCE_UNAVAILABLE` | 参照先を利用できません |
 | `INVALID_REQUEST` | 依頼の内容を確認してください |
+| `INVALID_ARTIFACT` | 処理結果の成果物 URL が規則に合いませんでした |
 | `PERMISSION_REQUIRED` | 処理に必要な権限がありません |
 | `PROCESSING_ERROR` | 処理中にエラーが起きました |
 | `LEASE_EXPIRED_MAX_ATTEMPTS` | 実行期限切れが再試行の上限に達しました |
 
 CLI の `fail` は入力に試行回数を持たないため、既定文をサーバーに生成させます。API には `notify:{}` を送り、Job Store が保存済みの試行回数を使います。`--no-notify` では `notify` 自体を送らず、通知を作りません。
 
-既定の失敗文は `attempts < max_attempts` のときだけ `/retry` を案内します。上限に達した場合は「再実行の上限（N 回）に達したため、/retry はできません。」と伝えます。Reconciler の `LEASE_EXPIRED_MAX_ATTEMPTS` も上限の文面になります。
+既定の失敗文は `INVALID_ARTIFACT` なら試行回数によらず `/retry` を案内せず、「同じ処理を再実行しても成果物 URL の規則違反は直らないため、処理側の修正が必要です。」と伝えます。Worker とサーバーの既定文（CLI の `fail` が送る `notify:{}`）で同じ規則を使います。それ以外は `attempts < max_attempts` のときだけ `/retry` を案内します。`INVALID_ARTIFACT` 以外で上限に達した場合は「再実行の上限（N 回）に達したため、/retry はできません。」と伝えます。Reconciler の `LEASE_EXPIRED_MAX_ATTEMPTS` も上限の文面になります。
 
 API に未知の `error.code` を送ると「処理中にエラーが起きました」になります。`error.message` は通知に出さず、マスクして保存するだけです。`process` の失敗結果の `message` と例外の message も同じ扱いです。独自の利用者向け文面が必要なら `notify.body` を指定します。
 
@@ -138,10 +139,10 @@ API の 4xx は code と message を保持します。設定値、トークン�
 独自の `notify.body` は `runWorkerOnce` と CLI で同じ関数を通します。返信用の記号を除去して 1500 コードポイント以内に切り、切った場合は戻り値または出力 JSON に `notify_truncated:true` を付けます。🧞‍♂️ や 🪔 だけで空になった本文は既定文に置き換え、`notify_replaced:true` を付けます。指定した本文がそのまま使われた場合、これらのフラグは付きません。
 
 
-成果物 `artifact_urls` は20件以内、1本1200コードポイント以内、空白・制御文字なしのHTTPS URLにしてください。APIのcomplete、CLI、runWorkerOnceは同じ規則を使います。CLIは不正入力を終了コード2で拒否します。APIは400で拒否します。runWorkerOnceはprocessの結果をcomplete前に検証し、不正ならcompleteを送らず、`fail` の `INVALID_REQUEST` にします。規則に違反した理由だけをerror.messageに保存し、URL本文は保存しません。結果も保存せず失敗として知らせます。fail成功後はleaseが切れても再キューされません。URLを黙って捨ててdoneにすることを避けるため、この方式を使います。
+成果物 `artifact_urls` は20件以内、1本1200コードポイント以内、空白・制御文字なしのHTTPS URLにしてください。APIのcomplete、CLI、runWorkerOnceは同じ規則を使います。CLIは不正入力を終了コード2で拒否します。APIは400で拒否します。runWorkerOnceはprocessの結果をcomplete前に検証し、不正ならcompleteを送らず、`fail` の `INVALID_ARTIFACT` にします。規則に違反した理由だけをerror.messageに保存し、URL本文は保存しません。結果も保存せず失敗として知らせます。fail成功後はleaseが切れても再キューされません。URLを黙って捨ててdoneにすることを避けるため、この方式を使います。
 
 成功したrunWorkerOnceとCLI completeは、通知本文に完全なURL行として載らなかった件数を `artifact_urls_omitted:N` で返します。0件なら省略します。独自notifyにも適用します。`--no-notify` は全URLが未掲載となります。`notify_truncated` と `notify_replaced` も成功時だけ返し、APIエラーや通信障害ではこれらのフラグと省略件数を返しません。
 
-チャットの利用者は元のトークで `/status <job_id> [ページ]` を送り、保存済みの成果物URLを確認できます。ページ省略は1です。doneの状態行の直後にURLを並べ、見出しと案内を含め1500コードポイント以内に分割します。URLは途中で切りません。続きは `/status J-000123 2` のように案内します。不正な番号はページ番号の説明、ページ外は有効範囲を返します。別の許可トークでは状態だけを返し、URLとページ案内は出しません。
+チャットの利用者は元のトークで `/status <job_id> [ページ]` を送り、保存済みの成果物URLを確認できます。ページ省略は1です。doneの状態行の直後にURLを並べ、見出しと案内を含め1500コードポイント以内に分割します。URLは途中で切りません。続きは `/status J-000123 2` のように案内します。不正な番号はページ番号の説明、ページ外は有効範囲を返します。別の許可トークでは、存在しないIDと同じ「ジョブが見つかりません。」を返し、ジョブの存在と状態を漏らしません。ページ番号が不正な場合も同じです。
 
 変更前に保存された長大URLが単独でも表示上限を超える場合は、短いURLでの再登録が必要な旨を返します。既存URLの自動変換はしません。
