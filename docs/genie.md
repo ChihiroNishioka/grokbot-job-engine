@@ -63,7 +63,7 @@ Genie の設定（`config.json`）に足すキーの例は次のとおりです�
 
 返信は `kind='command'`、`channel='genie'`、キー `cmd:<guid>` の outbox に入れる。ジョブがない `/help` や見つからないジョブへの返信では job_id は null。送り先と返信元 guid は、そのコマンドのメッセージから保存する。
 
-`/status` はジョブ ID、日本語の状態、試行回数、キャンセル要求の有無を返す。状態の表記は受付済み、実行中、完了、失敗、キャンセル済み。`/cancel` と `/retry` は Job API と同じ状態遷移を使う。実行中の cancel はキャンセル要求を立てる。retry の上限では「再実行の上限に達しています」と返す。
+`/status` はジョブ ID、日本語の状態、試行回数、キャンセル要求の有無を返す。状態の表記は受付済み、実行中、完了、失敗、キャンセル済み。`/cancel` と `/retry` は Job API と同じ状態遷移を使う。実行中の cancel はキャンセル要求を立てる。retry の上限ではジョブ ID、試行回数、上限回数と「/retry はできません。」を返す。
 
 コマンドが参照できるのは source_chat_id が同じジョブだけ。別のトークのジョブと存在しないジョブは、どちらも「ジョブが見つかりません。」と返す。再送ではコマンドを再実行しない。
 
@@ -107,10 +107,10 @@ Authorization: Bearer <GENIE_TOKEN>
 
 Genie 由来のジョブでは追加の enqueue と complete/fail の notify も genie channel に入る。`/outbox/claim` は genie 行を取得しない。Reconciler の staleOutbox は genie 行も報告する。
 
-完了文は固定文と成果物 URL を先に確保し、結果の可変部分だけを切って1500字以内にします。失敗文の原因は error.code から固定の安全な文を作り、未知のコードは「処理中にエラーが起きました」とします。例外の message はマスクして error にだけ保存します。cancelled の返信は「ジョブ J-… はキャンセルしました。」で、retry は案内しません。
+完了文は固定文と要約最低200コードポイント（短ければ全文）を確保し、入る成果物 URL を順に載せて1500コードポイント以内にします。省略した URL の件数を案内し、全件を結果に保存します。失敗文の原因は error.code から固定の安全な文を作り、未知のコードは「処理中にエラーが起きました」とします。例外の message はマスクして error にだけ保存します。失敗文は試行回数が上限未満の場合だけ /retry を案内します。cancelled の返信は「ジョブ J-… はキャンセルしました。」で、retry は案内しません。
 
 /help は各コマンドの説明を返します。cancel は「キャンセルしました。」または「キャンセルを受け付けました。実行中の処理が止まるのを待っています。」、retry は「再実行を受け付けました。」と状態を返します。
 
 complete / fail と Reconciler の終端通知は `job:<job_id>:<kind>:<attempt>` をキーにします。Reconciler は既存の genie channel の outbox があるジョブを Genie 経由と判定し、lease 切れで failed / cancelled にしたときに同じトランザクションで通知を作ります。
 
-成果物 URL と固定文だけで1500字を超える場合は、URLを切らず `ARTIFACT_NOTIFICATION_TOO_LONG` を返します。Worker は `outcome:"notification_error"` と job_id、code を返し、complete / fail は送らず claim を保持します。CLI は終了コード2と同じ理由コードを返します。短い URL か明示的な短い `notify` で完了してください。CLI では `--no-notify` も使えます。API の成果物保存上限は変更しません。
+長い通知と独自の notify の扱いは [Worker の長い通知を送る手順](worker.md#長い通知を送る) を参照してください。通知の長さを理由に complete を止めたり処理を再実行したりしません。

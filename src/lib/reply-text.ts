@@ -1,14 +1,17 @@
-export class ArtifactNotificationTooLong extends Error {
-  readonly code = 'ARTIFACT_NOTIFICATION_TOO_LONG';
-  constructor() { super('ARTIFACT_NOTIFICATION_TOO_LONG'); }
-}
 export const truncate = (text: string, max = 1500) => [...text].slice(0, max).join('');
 export function completion(id: string, summary: string, urls: string[] = []): string {
   const prefix = `ジョブ ${id} が完了しました。\n\n結果：\n`;
-  const artifacts = urls.length ? '\n\n成果物：\n' + urls.join('\n') : '';
-  const available = 1500 - [...prefix + artifacts].length;
-  if (available < 0) throw new ArtifactNotificationTooLong();
-  return prefix + truncate(summary, available) + artifacts;
+  const reservedSummary = Math.min(200, [...summary].length);
+  const selected: string[] = [];
+  const omittedLine = (count: number) => count > 0 ? `\n\nほか ${count} 件の成果物 URL は結果に保存しました。` : '';
+  const artifacts = () => selected.length ? '\n\n成果物：\n' + selected.join('\n') : '';
+  for (const url of urls) {
+    selected.push(url);
+    const omitted = urls.length - selected.length;
+    if ([...prefix + artifacts() + omittedLine(omitted)].length + reservedSummary > 1500) selected.pop();
+  }
+  const suffix = artifacts() + omittedLine(urls.length - selected.length);
+  return prefix + truncate(summary, 1500 - [...prefix + suffix].length) + suffix;
 }
 export const failureReasons = {
   TIMEOUT: '処理が時間切れになりました',
@@ -19,7 +22,8 @@ export const failureReasons = {
   LEASE_EXPIRED_MAX_ATTEMPTS: '実行期限切れが再試行の上限に達しました',
 };
 export type FailureCode = keyof typeof failureReasons;
-export function failure(id: string, code: string): string {
+export function failure(id: string, code: string, retry: { canRetry: boolean; maxAttempts: number }): string {
   const reason = Object.entries(failureReasons).find(([key]) => key === code)?.[1] ?? failureReasons.PROCESSING_ERROR;
-  return `ジョブ ${id} の処理に失敗しました。\n\n原因：\n${reason}\n\n再実行する場合：\n/retry ${id}`;
+  const action = retry.canRetry ? `再実行する場合：\n/retry ${id}` : `再実行の上限（${retry.maxAttempts} 回）に達したため、/retry はできません。`;
+  return `ジョブ ${id} の処理に失敗しました。\n\n原因：\n${reason}\n\n${action}`;
 }

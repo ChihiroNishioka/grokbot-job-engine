@@ -33,7 +33,7 @@ test.each(reasons)('fix2-4 processor selects safe failure code %s', async (code,
   const notification = c.db.prepare('SELECT body FROM delivery_outbox').get();
   expect(JSON.stringify(notification)).toContain(reason);
   expect(JSON.stringify(notification)).not.toContain(token);
-  expect(failure('J-000123', code)).toContain(reason);
+  expect(failure('J-000123', code, { canRetry: true, maxAttempts: 3 })).toContain(reason);
 });
 test.each(['🧞', '🪔', ' 🧞‍♂️ 🪔 \n', '\u200B🪔'])('fix2-6 empty normalized completion uses default (%#)', async body => {
   const { c, client } = worker();

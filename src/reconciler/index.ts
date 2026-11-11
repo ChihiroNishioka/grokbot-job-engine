@@ -44,7 +44,7 @@ export function reconcile(
     const type = job.status === 'queued' ? 'job.requeued' : `job.${job.status}`;
     writeEvent(db, { job_id: id, at: now, actor: 'reconciler', type, from_status: 'claimed', to_status: job.status, reason: 'lease_expired' });
     if ((job.status === 'failed' || job.status === 'cancelled') && db.prepare("SELECT 1 FROM delivery_outbox WHERE job_id=? AND channel='genie' LIMIT 1").get(id)) {
-      new OutboxStore({ db, clock, config }).enqueue({ job_id: id, kind: job.status, idempotency_key: `job:${id}:${job.status}:${job.attempts}`, body: job.status === 'cancelled' ? `ジョブ ${id} はキャンセルしました。` : failure(id, 'LEASE_EXPIRED_MAX_ATTEMPTS') });
+      new OutboxStore({ db, clock, config }).enqueue({ job_id: id, kind: job.status, idempotency_key: `job:${id}:${job.status}:${job.attempts}`, body: job.status === 'cancelled' ? `ジョブ ${id} はキャンセルしました。` : failure(id, 'LEASE_EXPIRED_MAX_ATTEMPTS', { canRetry: false, maxAttempts: job.max_attempts }) });
     }
     return job;
   });

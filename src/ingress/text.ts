@@ -11,11 +11,11 @@ export function acknowledgement(id:string,text:string):string {
  return truncate(`依頼を受け付けました。\nジョブID：${id}\n内容：${truncate(text,40)}\n状態：受付済み`);
 }
 
-export function replyText(text:string):string {
+export function replyText(text:string,max=1500):string {
  let result=requestText(text);
  while(result.startsWith('🧞')||result.startsWith('🪔')){
   result=result.startsWith('🧞')?result.replace(/^🧞(?:\u200D♂)?\uFE0F?/u,''):result.slice('🪔'.length);
   result=requestText(result);
  }
- return truncate(result);
+ return truncate(result,max);
 }

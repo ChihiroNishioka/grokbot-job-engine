@@ -169,10 +169,21 @@
 |---|---|---|
 | G75 | EOFで終了する偽ncでも応答を読み切り、長さ/chunked終端でkillする。close時も完全な応答は成功。不完全応答は失敗 | test/worker/tailscale-nc.test.ts |
 | G76 | retry後の同種通知は異なる試行キーになり、同じ試行の再送は増えない。terminalWithoutOutboxは最後の試行で判定する | test/fix1-store.test.ts |
-| G77 | 完了文のURLと固定文を保持し、結果だけを切って1500コードポイント以内。固定文とURLだけで上限超過の場合は明示エラー、独自notifyなら完了できる。失敗原因はコード別の固定文、生messageはマスク保存だけ | test/worker/review-fixes.test.ts |
+| G77 | 完了文の固定文と要約最低200コードポイントを確保し、入るURLを順に載せ1500コードポイント以内。残りURLは省略件数を案内し、全件を結果に保存して完了する。失敗原因はコード別の固定文、生messageはマスク保存だけ | test/worker/review-fixes.test.ts |
 | G78 | fail取消時はcancelled通知のみ。lease切れのGenie由来failed/cancelledは同じトランザクションで試行別通知を作り再送は冪等 | test/fix1-store.test.ts |
 | G79 | 既知の管理コマンドだけを判定し前後空白を許す。未知のスラッシュ依頼はジョブ。help/見つからない/cancel/retryは13.7の文面 | test/fix1-store.test.ts |
 | G80 | 長すぎる依頼は200 rejected/too_long、cmd:guidの説明返信が1件だけ | test/fix1-store.test.ts |
 | G81 | CLIの理由コードと4xxのcode/messageを保持し秘密を出さない。notify省略は既定文、--no-notifyで抑止 | test/worker/cli.test.ts |
 | G82 | processにjob/claimToken/heartbeatを渡しcancel_requestedを取得。heartbeat通信失敗で終端書込みをしない。非文字列summaryは固定文 | test/worker/review-fixes.test.ts |
 | G83 | docs/status.mdにDispatcher未配線と実配送の実機未確認を集約し、README/worker/genieから参照する | test/worker/review-fixes.test.ts |
+
+## PR #1 mid 修正
+
+| ID | 条件 | テスト |
+|---|---|---|
+| G84 | IPv6 Host は角括弧付き、既存角括弧は維持、IPv4 は変更なし。同じ Host で app.request が200。nc には生 IPv6 と port を別々に渡す | test/worker/mids-ipv6.test.ts の G84 |
+| G85 | 既定の失敗文は attempts < max_attempts のときだけ retry を案内。Worker、CLI、Reconcilerと上限時の管理コマンドに適用。CLIの既定文はサーバーが生成し --no-notify は通知なし | test/worker/mids-notify.test.ts の G85 |
+| G86 | 完了文は必ず1500コードポイント以内。定型文と要約最低200字（短ければ全部）を確保、URLは入るだけ順に載せ、省略件数を案内。結果全件を保存してcompleteしlease後も再実行しない | test/worker/mids-notify.test.ts の G86、test/worker/review-fixes.test.ts の G86 |
+| G87 | WorkerとCLIは独自notifyを共通関数で切り、notify_truncatedを返す。記号除去で空なら既定文に置き換えnotify_replacedを返す | test/worker/mids-notify.test.ts の G87 |
+| G88 | CLIの - はstdinをEOFまで読み、改行と引用符を保持。UTF-8の1MiBまで受理し超過はSTDIN_TOO_LARGE、不正JSONはBAD_JSON。値はエラーに出さない | test/worker/mids-stdin.test.ts の G88 |
+| G89 | WorkerとCLIでheartbeat取消を確認しfailするとcancelledと固定取消通知だけ。独自notifyを無視。確認せずcompleteはdone。ガイドにこの手順がある | test/worker/mids-cancel.test.ts の G89 |

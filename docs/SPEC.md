@@ -219,7 +219,7 @@ CREATE INDEX outbox_lease_idx  ON delivery_outbox(status, lease_expires_at);
 | GET `/jobs/:id` | なし | 200 `{job}` | 404 JOB_NOT_FOUND |
 | GET `/jobs` | query: `status`, `source_chat_id`, `job_type`, `limit`（1〜100、既定 20） | 200 `{jobs:[…]}`。新しい順 | 400（limit が 0 や 101 以上、status が不正など） |
 | GET `/jobs/:id/events` | query: `limit`（1〜100、既定 50） | 200 `{events:[…]}`。古い順 | 404 |
-| POST `/jobs/claim` | `{worker_id, lease_seconds?, job_types?: string[]}` | 200 `{job, claim_token, lease_expires_at, run_id}`。対象がなければ 200 `{job:null}` | 400 |
+| POST `/jobs/claim` | `{worker_id, lease_seconds?, job_types?: string[]}` | 200 `{job, claim_token, lease_expires_at, run_id}`（job に今回の `attempts` と `max_attempts` を含む）。対象がなければ 200 `{job:null}` | 400 |
 | POST `/jobs/:id/claim` | `{worker_id, lease_seconds?}` | 200（上と同じ形） | 404, 409 JOB_NOT_CLAIMABLE |
 | POST `/jobs/:id/heartbeat` | `{claim_token, lease_seconds?}` | 200 `{lease_expires_at, cancel_requested}` | 404, 409 INVALID_TRANSITION / CLAIM_TOKEN_MISMATCH / LEASE_EXPIRED |
 | POST `/jobs/:id/complete` | `{claim_token, result: object, artifact_urls?: string[]}` | 200 `{job}` | 400, 404, 409（heartbeat と同じ） |
@@ -453,7 +453,7 @@ interface WakeDispatcher { wake(): Promise<WakeResult> }
 | `/help` | なし | 使い方の一覧 |
 | `/status J-000123` | 何も変えない | ジョブ ID、状態（日本語: 受付済み / 実行中 / 完了 / 失敗 / キャンセル済み）、試行回数、キャンセル要求の有無 |
 | `/cancel J-000123` | 6 章の cancel と同じ | 結果 |
-| `/retry J-000123` | 6 章の retry と同じ | 結果（上限なら「再実行の上限に達しています」） |
+| `/retry J-000123` | 6 章の retry と同じ | 結果（上限ならジョブ ID、試行回数、上限回数を添え「/retry はできません。」） |
 
 - ジョブ単位のアクセス制御: コマンドで触れるのは、source_chat_id がそのメッセージの chat_id と同じジョブだけ。違うトークのジョブと存在しないジョブは、どちらも「ジョブが見つかりません。」と返す（存在を漏らさない）。
 - 既知の管理コマンドで形が違う（ID なし、不正な ID）場合は `/help` と同じ返信に「コマンドを読めませんでした。」を付ける。未知のスラッシュで始まる依頼は通常のジョブにする。
@@ -463,8 +463,9 @@ interface WakeDispatcher { wake(): Promise<WakeResult> }
 
 - 受付: `依頼を受け付けました。\nジョブID：J-000123\n内容：<本文の先頭 40 字>\n状態：受付済み`
 - 完了（complete の `notify` が無いときに Worker が使う既定文）: `ジョブ J-000123 が完了しました。\n\n結果：\n<summary>`（成果物 URL があれば `\n\n成果物：\n<URL>` を足す）
-- 失敗: `ジョブ J-000123 の処理に失敗しました。\n\n原因：\n<安全に表示できるエラー概要>\n\n再実行する場合：\n/retry J-000123`
-- 文面は 1500 字以内に切る。先頭に 🧞‍♂️ は付けない（Genie が 1 通目に印だけを送るため）。先頭を 🪔 にしない。
+- 失敗（`attempts < max_attempts` のとき）: `ジョブ J-000123 の処理に失敗しました。\n\n原因：\n<安全に表示できるエラー概要>\n\n再実行する場合：\n/retry J-000123`
+- 上限到達時の失敗文は再実行案内を「再実行の上限（N 回）に達したため、/retry はできません。」に置き換える。Reconciler の LEASE_EXPIRED_MAX_ATTEMPTS では常にこの文を使う。
+- 文面は 1500 コードポイント以内に切る。先頭に 🧞‍♂️ は付けない（Genie が 1 通目に印だけを送るため）。先頭を 🪔 にしない。
 
 ### 13.5 `GET /genie/replies`（Genie の `reply_fetch_url`）
 
@@ -496,20 +497,22 @@ Genie の `HTTPReplySource`（Sources/GenieCore/ReplySource.swift）の形に合
   - 接続できない（応答が来ないまま子プロセスが終わる）→ `reason:"connect_failed"`
   - 時間切れ（既定 15 秒。子プロセスを止める）→ `reason:"timeout"`
 - Worker の 1 回分（`runWorkerOnce`）: claim → 処理 → complete / fail。どの段階で届かなくなっても、何も書かずに `outcome:"unreachable"` で終わる。claim 済みなら lease が切れたあと Reconciler が queued に戻し、Dispatcher を配線した後は、起こし直したときに再開する（at-least-once）。処理関数の例外だけを fail にする。
-- CLI（`node dist/worker-cli.js <claim|get|heartbeat|complete|fail|outbox> [JSON]`）を Routine から Shell で呼べるようにする。トークンは `JOB_API_TOKEN_FILE`（600 のファイル）から読み、引数や出力に出さない。終了コード: 0 成功、3 届かない、4 API のエラー、2 使い方の誤り。出力は JSON 1 行。
+- CLI（`node dist/worker-cli.js <claim|get|heartbeat|complete|fail|outbox> [JSON|-]`）を Routine から Shell で呼べるようにする。トークンは `JOB_API_TOKEN_FILE`（600 のファイル）から読み、引数や出力に出さない。終了コード: 0 成功、3 届かない、4 API のエラー、2 使い方の誤り。出力は JSON 1 行。
 - 設定（Worker 側）: `JOB_API_TAILNET_HOST`、`JOB_API_PORT`、`JOB_API_TOKEN_FILE`、`TAILSCALE_BIN`（既定 `tailscale`）、`JOB_API_TIMEOUT_MS`（既定 15000）。値はリポジトリに書かない。
 - 手順と理由は `docs/worker.md` に書く。実際の tailscale の設定変更や tailscaled の再起動はしない。
 
 ### 13.7 レビュー修正で確定した契約
 
-- 完了文は固定の部分と成果物 URL を先に確保し、可変の結果だけを切って1500字以内にする。summary が文字列でなければ「結果を保存しました。」。
+- 完了文は先頭の定型文と要約最低200コードポイント（短ければ全文）を確保し、URLは入るだけ順に並べ、1500コードポイント以内にする。入らないURLは切らず「ほか N 件の成果物 URL は結果に保存しました。」の1行にまとめる。summary が文字列でなければ「結果を保存しました。」。結果とURLは全件をcompleteで保存し、通知の長さを理由に再実行しない。
 - 失敗文の原因は error.code から作る固定文。PROCESSING_ERROR と未知コードは「処理中にエラーが起きました」、LEASE_EXPIRED_MAX_ATTEMPTS は「実行期限切れが再試行の上限に達しました」。生の例外 message はマスクして error に保存するだけ。
 - fail が cancelled になったら kind=cancelled、本文は「ジョブ J-… はキャンセルしました。」。/retry を案内しない。
 - /help は各コマンドに説明を付ける。不正な既知コマンドは「コマンドを読めませんでした。」と使い方。見つからない場合は「ジョブが見つかりません。」。cancel は「キャンセルしました。」か「キャンセルを受け付けました。実行中の処理が止まるのを待っています。」。retry は「再実行を受け付けました。」と状態。
 - lease 切れで failed / cancelled にする Genie 経由のジョブ（既存 channel=genie の outbox があるもの）は、同じトランザクションで kind=failed / cancelled の outbox を作る。キーは12.8と同じ試行ごとの形式。
 - tailscale nc は要求送信後に stdin を EOF にしない。Content-Length または chunked の終端まで読んだら完了して子プロセスを止める。サーバーが閉じてプロセスが終了したときも完全な応答なら成功。
 - runWorkerOnce の process は `{job, claimToken, heartbeat(): Promise<boolean>}` を受け取る。heartbeat は cancel_requested を返す。届かないときは unreachable とし、process が例外を捕捉しても complete / fail しない。
-- worker-cli の complete / fail は notify 省略時に completion / failure の既定文を付ける。`--no-notify` で抑止する。使い方の理由コードに BAD_JSON / UNKNOWN_COMMAND / MISSING_CONFIG / TOKEN_FILE_MODE / TOKEN_TOO_SHORT を含める。API の4xxは code と message を保持し、トークンとファイル内容は出さない。
+- worker-cli の complete は notify 省略時に completion の既定文を付ける。fail は `notify:{}` を送りサーバーが保存済みの `attempts < max_attempts` で既定文を生成する。APIのfailは `notify.body` を省略でき、notify自体を省略すれば通知なし。`--no-notify` で抑止する。使い方の理由コードに BAD_JSON / UNKNOWN_COMMAND / MISSING_CONFIG / TOKEN_FILE_MODE / TOKEN_TOO_SHORT を含める。API の4xxは code と message を保持し、トークンとファイル内容は出さない。
 - main.ts は Dispatcher を起動しません。Phase 1 は Worker を起こす仕組みが無いため、Worker は手動または外部から呼び出す必要があります。`tailscale nc` と Genie との実配送は実機で未確認です。
 
-成果物 URL と固定文だけで1500字を超える場合は、URLを切らず `ARTIFACT_NOTIFICATION_TOO_LONG` を返します。Worker は `outcome:"notification_error"` と job_id、code を返し、complete / fail は送らず claim を保持します。CLI は終了コード2と同じ理由コードを返します。短い URL か明示的な短い `notify` で完了してください。CLI では `--no-notify` も使えます。API の成果物保存上限は変更しません。
+- 独自の notify.body は Worker と CLI で同じ関数を通し、返信用記号を除去後1500コードポイントに切る。切った場合は戻り値とCLI出力JSONのトップレベルに `notify_truncated:true`、記号だけで空になり既定文へ戻した場合は `notify_replaced:true`。通常はフラグを省略する。`--no-notify` では変換も通知もしない。
+- CLIのJSON引数 `-` は標準入力をEOFまで読む。上限1MiB（バイト数）、超過は終了コード2のUSAGE_ERROR / STDIN_TOO_LARGE。不正JSONは同じ形式のBAD_JSON。入力本文や値はエラーに含めない。
+- Workerのheartbeat()がtrueを返したら、処理関数は処理を止めて `{ok:false,code:"PROCESSING_ERROR"}` を返す。CLIもcancel_requested:trueを確認したら同じコードでfailを送る。cancel_requestedのあるfailはcancelledとなり、notify.bodyは固定のキャンセル文に置き換える。heartbeatを呼ばずcompleteを送ればキャンセル要求があってもdoneになる。

@@ -19,7 +19,7 @@ test('G74 CLI codes and JSON output never expose file token or API echo', async 
   try {
     const unreachable: Transport = { async request() { return { ok: false, unreachable: true, reason: 'nc_not_found' }; } };
     const api: Transport = { async request() { return { ok: true, status: 401, body: JSON.stringify({ error: { code: 'UNAUTHORIZED', message: token } }) }; } };
-    const success: Transport = { async request() { return { ok: true, status: 200, body: JSON.stringify({ job: {job_id: 'J-000001', request_text: `Bearer ${token}`}, claim_token: 'dummy-claim-'.repeat(4) }) }; } };
+    const success: Transport = { async request() { return { ok: true, status: 200, body: JSON.stringify({ job: {job_id: 'J-000001', request_text: `Bearer ${token}`, attempts: 1, max_attempts: 3}, claim_token: 'dummy-claim-'.repeat(4) }) }; } };
     for (const [argv, transport, expected] of [
       [['claim', '{"worker_id":"worker-a"}'], unreachable, 3],
       [['claim', '{"worker_id":"worker-a"}'], api, 4],
@@ -123,7 +123,7 @@ test('fix1-10 CLI supplies completion and failure notifications unless --no-noti
       expect((await runWorkerCli([verb, JSON.stringify(input)], env, { transport })).exitCode).toBe(0);
     }
     expect(bodies[0]).toMatchObject({ notify: { body: 'ジョブ J-000001 が完了しました。\n\n結果：\n保存しました\n\n成果物：\nhttps://example.invalid/result' } });
-    expect(bodies[1]).toMatchObject({ notify: { body: 'ジョブ J-000001 の処理に失敗しました。\n\n原因：\n処理中にエラーが起きました\n\n再実行する場合：\n/retry J-000001' } });
+    expect(bodies[1]).toMatchObject({ notify: {} });
     for (const [verb, input] of [['complete', complete], ['fail', fail]] as const) {
       expect((await runWorkerCli([verb, JSON.stringify(input), '--no-notify'], env, { transport })).exitCode).toBe(0);
     }
@@ -134,8 +134,8 @@ test('fix1-10 CLI supplies completion and failure notifications unless --no-noti
     expect((await runWorkerCli(['complete', JSON.stringify({ ...complete, result: { summary: { private: 'detail' } } })], env, { transport })).exitCode).toBe(0);
     expect(bodies[5]).toMatchObject({ notify: { body: expect.stringContaining('結果を保存しました。') } });
     const oversized = await runWorkerCli(['complete', JSON.stringify({ ...complete, artifact_urls: ['https://example.invalid/' + 'x'.repeat(1500)] })], env, { transport });
-    expect(oversized.exitCode).toBe(2);
-    expect(JSON.parse(oversized.output)).toMatchObject({ reason: 'ARTIFACT_NOTIFICATION_TOO_LONG' });
+    expect(oversized.exitCode).toBe(0);
+    expect(bodies.at(-1)).toMatchObject({ notify: { body: expect.stringContaining('ほか 1 件の成果物 URL は結果に保存しました。') } });
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -193,7 +193,7 @@ test.each(['complete', 'fail'])('fix2-6 CLI %s replaces empty formatted notifica
   const file = join(dir, 'token');
   writeFileSync(file, 'dummy-empty-notify-'.repeat(3), { mode: 0o600 });
   const env = { JOB_API_TAILNET_HOST: 'dummy-host', JOB_API_TOKEN_FILE: file };
-  const requests: { notify: { body: string } }[] = [];
+  const requests: { notify: { body?: string } }[] = [];
   const transport: Transport = { async request(request) {
     requests.push(JSON.parse(request.body ?? '{}'));
     return { ok: true, status: 200, body: '{"job":null}' };
@@ -203,8 +203,8 @@ test.each(['complete', 'fail'])('fix2-6 CLI %s replaces empty formatted notifica
   try {
     for (const body of ['🪔', '🧞', '🪔 🧞‍♂️ 🪔', '\u200B\u200F\uFEFF']) {
       expect((await runWorkerCli([verb, JSON.stringify({ ...input, notify: { body } })], env, { transport })).exitCode).toBe(0);
-      expect(requests.at(-1)?.notify.body).toContain(verb === 'complete' ? 'ジョブ J-000001 が完了しました。' : 'ジョブ J-000001 の処理に失敗しました。');
-      expect(requests.at(-1)?.notify.body).not.toContain('private detail');
+      if (verb === 'complete') expect(requests.at(-1)?.notify.body).toContain('ジョブ J-000001 が完了しました。');
+      else expect(requests.at(-1)?.notify).toEqual({});
     }
     if (verb === 'complete') {
       const custom = await runWorkerCli([verb, JSON.stringify({ ...input, artifact_urls: ['https://example.invalid/' + 'x'.repeat(1500)], notify: { body: '🧞 独自本文' } })], env, { transport });

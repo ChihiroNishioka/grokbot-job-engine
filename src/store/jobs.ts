@@ -4,6 +4,7 @@ import { mask } from '../logging/mask.js';
 import { StoreError } from './errors.js';
 import { readEvents, writeEvent } from './events.js';
 import { OutboxStore } from './outbox.js';
+import { failure } from '../lib/reply-text.js';
 
 const clearClaim = 'claimed_at=NULL,claimed_by=NULL,claim_token=NULL,lease_expires_at=NULL,heartbeat_at=NULL';
 export class JobStore {
@@ -106,7 +107,7 @@ export class JobStore {
       writeEvent(db,{job_id:id,at:now,actor:`worker:${row.claimed_by}`,type:`job.${row.status}`,from_status:'claimed',to_status:row.status});
       if(input.notify){
         const kind=row.status==='cancelled'?'cancelled':'failed';
-        new OutboxStore(this.deps).enqueue({job_id:id,idempotency_key:`job:${id}:${kind}:${row.attempts}`,kind,body:kind==='cancelled'?`ジョブ ${id} はキャンセルしました。`:input.notify.body});
+        new OutboxStore(this.deps).enqueue({job_id:id,idempotency_key:`job:${id}:${kind}:${row.attempts}`,kind,body:kind==='cancelled'?`ジョブ ${id} はキャンセルしました。`:(input.notify.body ?? failure(id,input.error.code,{canRetry:row.attempts<row.max_attempts,maxAttempts:row.max_attempts}))});
       }
       return {job:row};
     }).immediate();

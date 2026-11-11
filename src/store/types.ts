@@ -15,7 +15,7 @@ export interface CreateInput {source:'imessage';source_message_id:string;source_
 export interface ClaimInput {worker_id:string;lease_seconds?:number;job_types?:string[]}
 export interface TokenInput {claim_token:string;lease_seconds?:number}
 export interface CompleteInput extends TokenInput {result:Record<string,unknown>;artifact_urls?:string[];notify?:{body:string}}
-export interface FailInput extends TokenInput {error:{code:string;message:string};notify?:{body:string}}
+export interface FailInput extends TokenInput {error:{code:string;message:string};notify?:{body?:string}}
 export interface EnqueueInput {job_id:string;idempotency_key:string;kind:string;body:string}
 export interface OutboxClaimInput extends ClaimInput {outbox_id?:number}
 export interface ListInput {status?:Status;source_chat_id?:string;job_type?:string;limit?:number}

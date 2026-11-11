@@ -5,7 +5,8 @@ export function encodeRequest(request: HttpRequest, host: string, port: number):
   const body = request.body ?? '';
   const headers = Object.entries(request.headers).filter(([name]) => !['host', 'connection', 'content-length', 'transfer-encoding'].includes(name.toLowerCase()));
   if (headers.some(([name, value]) => !/^[A-Za-z0-9-]+$/.test(name) || /[\r\n]/.test(value))) throw new Error('Invalid HTTP headers');
-  return Buffer.from(`${request.method} ${request.path} HTTP/1.1\r\nHost: ${host}:${port}\r\nConnection: close\r\nContent-Length: ${Buffer.byteLength(body)}\r\n${headers.map(([name, value]) => `${name}: ${value}\r\n`).join('')}\r\n${body}`);
+  const authorityHost = host.includes(':') && !(host.startsWith('[') && host.endsWith(']')) ? `[${host}]` : host;
+  return Buffer.from(`${request.method} ${request.path} HTTP/1.1\r\nHost: ${authorityHost}:${port}\r\nConnection: close\r\nContent-Length: ${Buffer.byteLength(body)}\r\n${headers.map(([name, value]) => `${name}: ${value}\r\n`).join('')}\r\n${body}`);
 }
 export function decodeResponse(raw: Buffer, connectionClosed = true): { status: number; body: string } | null {
   const boundary = raw.indexOf('\r\n\r\n');

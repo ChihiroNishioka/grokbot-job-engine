@@ -27,9 +27,9 @@ test('fix4 completion reserves artifacts and fixed text before trimming summary'
 });
 
 test('fix5 failure maps codes to safe fixed explanations', () => {
-  expect(failure('J-000001', '/private/internal.sqlite SELECT secret')).toContain('原因：\n処理中にエラーが起きました');
-  expect(failure('J-000001', '/private/internal.sqlite SELECT secret')).not.toContain('internal.sqlite');
-  expect(failure('J-000001', 'LEASE_EXPIRED_MAX_ATTEMPTS')).toContain('実行期限切れが再試行の上限に達しました');
+  expect(failure('J-000001', '/private/internal.sqlite SELECT secret', { canRetry: true, maxAttempts: 3 })).toContain('原因：\n処理中にエラーが起きました');
+  expect(failure('J-000001', '/private/internal.sqlite SELECT secret', { canRetry: true, maxAttempts: 3 })).not.toContain('internal.sqlite');
+  expect(failure('J-000001', 'LEASE_EXPIRED_MAX_ATTEMPTS', { canRetry: false, maxAttempts: 3 })).toContain('実行期限切れが再試行の上限に達しました');
 });
 
 test('fix5 processor exception is masked in storage and never echoed to user', async () => {
@@ -98,12 +98,12 @@ test('fix14 non-string summary uses fixed default and hides structured result', 
   expect(notification).not.toContain('internal-marker');
 });
 
-test('fix4 oversized mandatory artifacts return an explicit notification error without throwing', async () => {
+test('G86 oversized artifacts complete with an omission notice', async () => {
   const { c, client } = worker();
   const id = job(await c.req('POST', '/jobs', input())).job_id;
   const result = await runWorkerOnce({ client, claim: { worker_id: 'worker-a' }, process: async () => ({ result: { summary: 'ok' }, artifact_urls: ['https://example.invalid/' + 'x'.repeat(1500)] }) });
-  expect(result).toEqual({ outcome: 'notification_error', job_id: id, code: 'ARTIFACT_NOTIFICATION_TOO_LONG' });
-  expect(job(await c.req('GET', `/jobs/${id}`)).status).toBe('claimed');
+  expect(result).toEqual({ outcome: 'done', job_id: id });
+  expect(job(await c.req('GET', `/jobs/${id}`)).status).toBe('done');
 });
 
 test('fix4 oversized artifacts can complete with an explicit compact notification', async () => {
