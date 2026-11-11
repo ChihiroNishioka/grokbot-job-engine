@@ -41,7 +41,7 @@ claim、heartbeat、complete、fail のいずれかが届かなければ `outcom
 
 CLI の `fail` は入力に試行回数を持たないため、既定文をサーバーに生成させます。API には `notify:{}` を送り、Job Store が保存済みの試行回数を使います。`--no-notify` では `notify` 自体を送らず、通知を作りません。
 
-既定の失敗文は `INVALID_ARTIFACT` なら試行回数によらず `/retry` を案内せず、「同じ処理を再実行しても成果物 URL の規則違反は直らないため、処理側の修正が必要です。」と伝えます。Worker とサーバーの既定文（CLI の `fail` が送る `notify:{}`）で同じ規則を使います。それ以外は `attempts < max_attempts` のときだけ `/retry` を案内します。`INVALID_ARTIFACT` 以外で上限に達した場合は「再実行の上限（N 回）に達したため、/retry はできません。」と伝えます。Reconciler の `LEASE_EXPIRED_MAX_ATTEMPTS` も上限の文面になります。
+既定の失敗文は `INVALID_ARTIFACT` なら試行回数によらず `/retry` を案内せず、「同じ処理を再実行しても成果物 URL の規則違反は直らないため、処理側の修正が必要です。」と伝えます。Worker とサーバーの既定文（CLI の `fail` が送る `notify:{}`）で同じ規則を使います。それ以外は `attempts < max_attempts` のときだけ `/retry` を案内します。`INVALID_ARTIFACT` 以外で上限に達した場合は「試行の上限（N 回）に達したため、/retry はできません。」と伝えます。Reconciler の `LEASE_EXPIRED_MAX_ATTEMPTS` も上限の文面になります。
 
 API に未知の `error.code` を送ると「処理中にエラーが起きました」になります。`error.message` は通知に出さず、マスクして保存するだけです。`process` の失敗結果の `message` と例外の message も同じ扱いです。独自の利用者向け文面が必要なら `notify.body` を指定します。
 

@@ -25,6 +25,6 @@ export const failureReasons = {
 export type FailureCode = keyof typeof failureReasons;
 export function failure(id: string, code: string, retry: { canRetry: boolean; maxAttempts: number }): string {
   const reason = Object.entries(failureReasons).find(([key]) => key === code)?.[1] ?? failureReasons.PROCESSING_ERROR;
-  const action = code === 'INVALID_ARTIFACT' ? '同じ処理を再実行しても成果物 URL の規則違反は直らないため、処理側の修正が必要です。' : retry.canRetry ? `再実行する場合：\n/retry ${id}` : `再実行の上限（${retry.maxAttempts} 回）に達したため、/retry はできません。`;
+  const action = code === 'INVALID_ARTIFACT' ? '同じ処理を再実行しても成果物 URL の規則違反は直らないため、処理側の修正が必要です。' : retry.canRetry ? `再実行する場合：\n/retry ${id}` : `試行の上限（${retry.maxAttempts} 回）に達したため、/retry はできません。`;
   return `ジョブ ${id} の処理に失敗しました。\n\n原因：\n${reason}\n\n${action}`;
 }

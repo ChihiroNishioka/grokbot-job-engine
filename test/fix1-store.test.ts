@@ -54,7 +54,7 @@ it.each([false, true])('fix1-11 reconciler notifies Genie terminal transitions a
   c.db.prepare("UPDATE delivery_outbox SET channel='genie' WHERE outbox_id=?").run(ack.outbox_id);
   claim(); if (cancelled) store.cancel(id); c.clock.advance(10000);
   const status = cancelled ? 'cancelled' : 'failed'; reconcile(c, options); reconcile(c, options);
-  expect(c.table('delivery_outbox').filter(o => o.kind === status)).toMatchObject([{ channel: 'genie', idempotency_key: `job:${id}:${status}:1`, body: cancelled ? `ジョブ ${id} はキャンセルしました。` : expect.stringContaining('再実行の上限（1 回）に達したため、/retry はできません。') }]);
+  expect(c.table('delivery_outbox').filter(o => o.kind === status)).toMatchObject([{ channel: 'genie', idempotency_key: `job:${id}:${status}:1`, body: cancelled ? `ジョブ ${id} はキャンセルしました。` : expect.stringContaining('試行の上限（1 回）に達したため、/retry はできません。') }]);
   expect(c.table('delivery_outbox').filter(o => o.kind === status)).toHaveLength(1);
  } finally { c.close(); }
 });

@@ -53,8 +53,8 @@ function executeCommand(deps:AppDeps,chat:number,text:string):{command:Command;j
  }catch(error){
   if(!(error instanceof StoreError))throw error;
   const states={queued:'実行待ち',claimed:'実行中',done:'完了済み',failed:'失敗',cancelled:'キャンセル済み'};
-  const reason=error.code==='MAX_ATTEMPTS_REACHED'?'再実行の上限に達しています。':parsed.command==='cancel'?'キャンセルできません。':job.status==='queued'||job.status==='claimed'?'再実行は不要です。':'再実行できません。失敗したジョブだけが対象です。';
-  const message=error.code==='MAX_ATTEMPTS_REACHED'?`ジョブ ${job.job_id} は失敗しました。試行回数 ${job.attempts} 回で再実行の上限（${job.max_attempts} 回）に達したため、/retry はできません。`:`ジョブ ${job.job_id} は${states[job.status]}のため、${reason}`;
+  const reason=error.code==='MAX_ATTEMPTS_REACHED'?'試行の上限に達しています。':parsed.command==='cancel'?'キャンセルできません。':job.status==='queued'||job.status==='claimed'?'再実行は不要です。':'再実行できません。失敗したジョブだけが対象です。';
+  const message=error.code==='MAX_ATTEMPTS_REACHED'?`ジョブ ${job.job_id} は失敗しました。試行回数 ${job.attempts} 回で試行の上限（${job.max_attempts} 回）に達したため、/retry はできません。`:`ジョブ ${job.job_id} は${states[job.status]}のため、${reason}`;
   return {command:parsed.command,job_id:job.job_id,text:message};
  }
 }

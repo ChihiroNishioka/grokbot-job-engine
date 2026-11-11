@@ -37,7 +37,7 @@ test.each([1, 2])('G85 Worker failure offers retry exactly when attempts < max_a
   const body = String(rows(c, 'delivery_outbox')[0]?.body);
   if (max === 1) {
     expect(body).not.toContain('再実行する場合');
-    expect(body).toContain('再実行の上限（1 回）に達したため、/retry はできません。');
+    expect(body).toContain('試行の上限（1 回）に達したため、/retry はできません。');
   } else expect(body).toContain('/retry J-000001');
 });
 

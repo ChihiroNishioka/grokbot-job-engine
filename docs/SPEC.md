@@ -281,7 +281,7 @@ CREATE INDEX outbox_lease_idx  ON delivery_outbox(status, lease_expires_at);
 | 409 | INVALID_TRANSITION | この状態では実行できません |
 | 409 | CLAIM_TOKEN_MISMATCH | claim_token が一致しません |
 | 409 | LEASE_EXPIRED | lease の期限が切れています |
-| 409 | MAX_ATTEMPTS_REACHED | 再実行の上限に達しています |
+| 409 | MAX_ATTEMPTS_REACHED | 試行の上限に達しています |
 | 413 | PAYLOAD_TOO_LARGE | 本文が大きすぎます |
 | 429 | RATE_LIMITED | リクエストが多すぎます（`Retry-After` ヘッダーを付ける） |
 | 500 | INTERNAL | 内部エラーです |
@@ -466,7 +466,7 @@ interface WakeDispatcher { wake(): Promise<WakeResult> }
 - 完了（complete の `notify` が無いときに Worker が使う既定文）: `ジョブ J-000123 が完了しました。\n\n結果：\n<summary>`（成果物 URL があれば `\n\n成果物：\n<URL>` を足す）
 - 失敗（`INVALID_ARTIFACT` 以外で `attempts < max_attempts` のとき）: `ジョブ J-000123 の処理に失敗しました。\n\n原因：\n<安全に表示できるエラー概要>\n\n再実行する場合：\n/retry J-000123`
 - `INVALID_ARTIFACT` の原因文は「処理結果の成果物 URL が規則に合いませんでした」。試行回数によらず `/retry` を案内せず、「同じ処理を再実行しても成果物 URL の規則違反は直らないため、処理側の修正が必要です。」と伝える。Worker とサーバーの既定文（CLI の fail で `notify:{}`）に同じ規則を適用する。
-- `INVALID_ARTIFACT` 以外の上限到達時の失敗文は再実行案内を「再実行の上限（N 回）に達したため、/retry はできません。」に置き換える。Reconciler の LEASE_EXPIRED_MAX_ATTEMPTS では常にこの文を使う。
+- `INVALID_ARTIFACT` 以外の上限到達時の失敗文は再実行案内を「試行の上限（N 回）に達したため、/retry はできません。」に置き換える。Reconciler の LEASE_EXPIRED_MAX_ATTEMPTS では常にこの文を使う。
 - 文面は 1500 コードポイント以内に切る。先頭に 🧞‍♂️ は付けない（Genie が 1 通目に印だけを送るため）。先頭を 🪔 にしない。
 
 ### 13.5 `GET /genie/replies`（Genie の `reply_fetch_url`）
