@@ -13,3 +13,9 @@ Transport は偽の spawn のみで確認しています。EOF で終了する�
 GitHub Actions は private リポジトリで runner が起動しないため、box の通常シェルで同じ手順を実行しています。手順は `npm run lint`、`npm run typecheck`、`npm test`、`npm run check:secrets`、`npm run build` です。実行ごとの結果は Git 管理外の `.runs/` に記録します。
 
 Genie との接続には genie-in-messages の別 PR、ブランチ `feat/job-engine-route` のマージが必要です。設定は [Genie との契約](genie.md) にあります。
+
+## 送信者ハンドルの実機確認
+
+送信者ハンドルと家族グループ受付は実機で未確認です。imsgが返すsenderの形、家族の端末からGenie経由で受付・Worker claim・完了まで配送されること、オーナーの管理コマンド、家族のコマンドが無返信となることを確認する必要があります。ログとdeadletterの漏えい検査は実際の値を共有せず、あり・なしだけ記録してください。
+
+実DBのバックアップとv3移行、DBコピーを旧版で開けないこと、Routineのmember権限方針、CLIの出力が会話記録へ残る範囲、グループ返信のレート制限も未確認です。有効化の前にRoutineのmember権限方針をオーナーが確認してください。

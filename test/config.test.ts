@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { loadConfig } from '../src/config/index.js';
+import { ConfigError, loadConfig } from '../src/config/index.js';
 
 const valid = () => ({ JOB_API_TOKEN: 'dummy-'.repeat(8), ALLOWED_SOURCE_CHAT_IDS: 'chat-a,chat-b,21', GENIE_TOKEN: 'dummy-genie-'.repeat(4), GENIE_ALLOWED_CHAT_IDS: '21' });
 const ranges = {
@@ -65,4 +65,24 @@ test('G61 separated listeners and Genie configuration reject unsafe values witho
       GENIE_HOST: host, GENIE_PORT: 3321, GENIE_REPLY_PAGE_LIMIT: 50, GENIE_ALLOWED_CHAT_IDS: [21],
     });
   }
+});
+
+test.each([undefined, '', ' ', ', ,', '22', '22,', ' 22, ,22 '])('JE-SH1 group chats parse empty elements and default disabled (%s)', value => {
+  const config = loadConfig({ ...valid(), ALLOWED_SOURCE_CHAT_IDS: '21,22', GENIE_ALLOWED_CHAT_IDS: '21,22', GENIE_GROUP_CHAT_IDS: value });
+  expect(config).toMatchObject({ GENIE_GROUP_CHAT_IDS: value?.includes('22') ? value.match(/22/g)?.map(Number) : [] });
+});
+
+test.each([
+  { GENIE_GROUP_CHAT_IDS: '23', GENIE_ALLOWED_CHAT_IDS: '21,22' },
+  { GENIE_GROUP_CHAT_IDS: 'x', GENIE_ALLOWED_CHAT_IDS: '21,22' },
+  { GENIE_GROUP_CHAT_IDS: '1.5', GENIE_ALLOWED_CHAT_IDS: '21,22' },
+  { GENIE_GROUP_CHAT_IDS: '9007199254740992', GENIE_ALLOWED_CHAT_IDS: '21,22' },
+  { GENIE_GROUP_CHAT_IDS: '22', GENIE_ALLOWED_CHAT_IDS: '21' },
+])('JE-SH1/A6 group chats must be safe integers and a Genie subset (%s)', overrides => {
+  let error: unknown;
+  try { loadConfig({ ...valid(), ALLOWED_SOURCE_CHAT_IDS: '21,22', ...overrides }); } catch (caught) { error = caught; }
+  expect(error).toBeInstanceOf(ConfigError);
+  expect(error).toMatchObject({ fields: ['GENIE_GROUP_CHAT_IDS'] });
+  expect(error).toBeInstanceOf(Error);
+  if (error instanceof Error) expect(error.message).not.toContain(overrides.GENIE_GROUP_CHAT_IDS);
 });

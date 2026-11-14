@@ -1,4 +1,5 @@
 import { statusReply } from './status-text.js';
+import { redactHandle } from '../logging/redact-handle.js';
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod';
@@ -14,7 +15,8 @@ import { writeEvent } from '../store/events.js';
 import type { Outbox,Job } from '../store/types.js';
 import { acknowledgement,requestText,truncate,replyText } from './text.js';
 
-const payloadSchema=z.strictObject({v:z.literal(1),event:z.literal('message'),idempotency_key:z.string().min(1).max(256),guid:z.string().min(1).max(256),chat_id:z.number().int().safe(),text:z.string(),created_at:z.string().nullable().optional(),sender_is_me:z.boolean(),sender_name:z.string()}).refine(p=>p.guid===p.idempotency_key);
+const senderHandle=z.string().min(1).max(256).refine(value=>!/\s/.test(value)).regex(/^(?:tel:\+?[0-9]{1,20}|email:[a-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@[a-z0-9-]+(?:\.[a-z0-9-]+)+)$/);
+const payloadSchema=z.strictObject({v:z.literal(1),event:z.literal('message'),idempotency_key:z.string().min(1).max(256),guid:z.string().min(1).max(256),chat_id:z.number().int().safe(),text:z.string(),created_at:z.string().nullable().optional(),sender_is_me:z.boolean(),sender_name:z.string(),sender_handle:senderHandle.optional()}).refine(p=>p.guid===p.idempotency_key).refine(p=>!p.sender_is_me||p.sender_handle===undefined);
 type Payload=z.infer<typeof payloadSchema>;
 type Command='help'|'status'|'cancel'|'retry';
 type Receipt={guid:string;chat_id:number;kind:'job'|'command'|'ignored';job_id:string|null;outbox_id:number|null;command:Command|'too_long'|null};
@@ -49,18 +51,18 @@ function executeCommand(deps:AppDeps,chat:number,text:string):{command:Command;j
   if(parsed.command==='cancel')job=store.cancel(job.job_id).job;
   if(parsed.command==='retry')job=store.retry(job.job_id).job;
   const action=parsed.command==='cancel'?(job.status==='cancelled'?'キャンセルしました。\n':'キャンセルを受け付けました。実行中の処理が止まるのを待っています。\n'):parsed.command==='retry'?'再実行を受け付けました。\n':'';
-  return {command:parsed.command,job_id:job.job_id,text:`${action}ジョブID：${job.job_id}\n状態：${statusText[job.status]}\n試行回数：${job.attempts}\nキャンセル要求：${job.cancel_requested?'あり':'なし'}`};
+  return {command:parsed.command,job_id:job.job_id,text:redactHandle(`${action}ジョブID：${job.job_id}\n状態：${statusText[job.status]}\n試行回数：${job.attempts}\nキャンセル要求：${job.cancel_requested?'あり':'なし'}`,job.sender_handle)};
  }catch(error){
   if(!(error instanceof StoreError))throw error;
   const states={queued:'実行待ち',claimed:'実行中',done:'完了済み',failed:'失敗',cancelled:'キャンセル済み'};
   const reason=error.code==='MAX_ATTEMPTS_REACHED'?'試行の上限に達しています。':parsed.command==='cancel'?'キャンセルできません。':job.status==='queued'||job.status==='claimed'?'再実行は不要です。':'再実行できません。失敗したジョブだけが対象です。';
   const message=error.code==='MAX_ATTEMPTS_REACHED'?`ジョブ ${job.job_id} は失敗しました。試行回数 ${job.attempts} 回で試行の上限（${job.max_attempts} 回）に達したため、/retry はできません。`:`ジョブ ${job.job_id} は${states[job.status]}のため、${reason}`;
-  return {command:parsed.command,job_id:job.job_id,text:message};
+  return {command:parsed.command,job_id:job.job_id,text:redactHandle(message,job.sender_handle)};
  }
 }
 function receive(deps:AppDeps,p:Payload) {
  if(!deps.config.GENIE_ALLOWED_CHAT_IDS.includes(p.chat_id))throw new StoreError('CHAT_NOT_ALLOWED');
- if(!p.sender_is_me)return {status:200 as const,body:{status:'ignored',reason:'not_from_me'}};
+ if(!p.sender_is_me&&(!deps.config.GENIE_GROUP_CHAT_IDS.includes(p.chat_id)||p.sender_handle===undefined))return {status:200 as const,body:{status:'ignored',reason:'not_from_me'}};
  const text=requestText(p.text);
  if(text.startsWith('🧞'))return {status:200 as const,body:{status:'ignored',reason:'bot_reply'}};
  if(text.length===0)return {status:200 as const,body:{status:'ignored',reason:'empty'}};
@@ -73,7 +75,9 @@ function receive(deps:AppDeps,p:Payload) {
   }
   const now=clock.now();
   const tooLong=[...text].length>deps.config.REQUEST_TEXT_MAX_CHARS;
-  if(tooLong || /^\/(help|status|cancel|retry)(?=\s|$)/.test(text.trim())) {
+  const isCommand=/^\/(help|status|cancel|retry)(?=\s|$)/.test(text.trim());
+  if(!tooLong&&isCommand&&!p.sender_is_me)return {status:200 as const,body:{status:'ignored',reason:'command_not_allowed'}};
+  if(tooLong || isCommand) {
    const result=tooLong?{command:'too_long' as const,job_id:null,text:`依頼が長すぎます（最大 ${deps.config.REQUEST_TEXT_MAX_CHARS} 字）。短くして送り直してください。`}:executeCommand(deps,p.chat_id,text);
    const inserted=db.prepare("INSERT INTO delivery_outbox(job_id,idempotency_key,kind,channel,target_chat_id,in_reply_to,body,status,created_at,updated_at) VALUES (?,?,'command','genie',?,?,?,'pending',?,?)").run(result.job_id,`cmd:${p.guid}`,String(p.chat_id),p.guid,truncate(result.text),now,now);
    const outboxId=Number(inserted.lastInsertRowid);
@@ -81,9 +85,9 @@ function receive(deps:AppDeps,p:Payload) {
    db.prepare("INSERT INTO ingress_messages(guid,chat_id,kind,job_id,outbox_id,received_at,created_at,command) VALUES (?,?,?,?,?,?,?,?)").run(p.guid,p.chat_id,tooLong?'ignored':'command',result.job_id,outboxId,now,now,result.command);
    return {status:200 as const,body:tooLong?{status:'rejected',reason:'too_long'}:{status:'command',command:result.command}};
   }
-  const result=new JobStore(deps).create({source:'imessage',source_message_id:p.guid,source_chat_id:String(p.chat_id),requester_id:'self',job_type:'general',request_text:text});
+  const result=new JobStore(deps).create({source:'imessage',source_message_id:p.guid,source_chat_id:String(p.chat_id),requester_id:p.sender_is_me?'self':'member',...(p.sender_handle===undefined?{}:{sender_handle:p.sender_handle}),job_type:'general',request_text:text});
   const id=result.job.job_id;
-  const ack=db.prepare("INSERT INTO delivery_outbox(job_id,idempotency_key,kind,channel,target_chat_id,in_reply_to,body,status,created_at,updated_at) VALUES (?,?,'ack','genie',?,?,?,'pending',?,?)").run(id,`job:${id}:ack`,String(p.chat_id),p.guid,acknowledgement(id,text),now,now);
+  const ack=db.prepare("INSERT INTO delivery_outbox(job_id,idempotency_key,kind,channel,target_chat_id,in_reply_to,body,status,created_at,updated_at) VALUES (?,?,'ack','genie',?,?,?,'pending',?,?)").run(id,`job:${id}:ack`,String(p.chat_id),p.guid,redactHandle(acknowledgement(id,redactHandle(text,result.job.sender_handle)),result.job.sender_handle),now,now);
   const outboxId=Number(ack.lastInsertRowid);
   writeEvent(db,{job_id:id,outbox_id:outboxId,at:now,actor:'genie',type:'outbox.enqueued',to_status:'pending'});
   db.prepare("INSERT INTO ingress_messages(guid,chat_id,kind,job_id,outbox_id,received_at,created_at) VALUES (?,?,'job',?,?,?,?)").run(p.guid,p.chat_id,id,outboxId,now,now);

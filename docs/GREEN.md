@@ -199,3 +199,34 @@
 | G93 | API completeとCLIはHTTPS・各1200コードポイント以内・20件以内・空白と制御文字不可の共有規則。境界1200を受理、1201を拒否 | test/worker/urlstatus.test.ts の G93 |
 | G94 | processの不正URLはcomplete前にfail INVALID_ARTIFACT、理由だけ保存。原因は「処理結果の成果物 URL が規則に合いませんでした」。試行残数によらず/retryを案内せず、処理側の修正が必要な理由を伝える。WorkerとCLI failのnotify:{}によるサーバー既定文で同じ規則。completeを呼ばず、lease切れと次回実行でも再処理しない | test/worker/urlstatus.test.ts の G94 |
 | G95 | Worker/CLI成功時は未掲載URL件数を返す。独自notifyとno-notifyにも適用。失敗時はnotify_*と省略件数を付けない | test/worker/urlstatus.test.ts の G95 |
+
+## 送信者ハンドルと家族グループ
+
+補足仕様を含む契約。電話のダミーは実行時に組み立て、メールはfamily@example.comだけを使う。
+
+| ID | 条件 | 置き場所 |
+|---|---|---|
+| JE-SH1 | グループ設定は既定で空。カンマの空要素を除く。安全な整数かつGENIE_ALLOWED_CHAT_IDSの部分集合だけを許可し、違反は値を含まないConfigError | `test/config.test.ts` |
+| JE-SH2 | グループ設定なしでは家族をnot_from_meで無視し保存しない | `test/ingress/sender-handle.test.ts` |
+| JE-SH3 | 設定グループの電話・メールをmemberジョブとackに一度だけ保存 | `test/ingress/sender-handle.test.ts` |
+| JE-SH4 | 非グループ、許可外、ハンドルなしの判定と保存件数 | `test/ingress/sender-handle.test.ts` |
+| JE-SH5 | 形式の共有表、長さ境界、ASCII、制御文字、未知型。拒否の値が応答とログにない | `test/ingress/sender-handle.test.ts` |
+| JE-SH6 | 自分のハンドル付きは400、キーなしはselfかつNULL | `test/ingress/sender-handle.test.ts` |
+| JE-SH7 | Ingressの未知キーとJob API createのsender_handleはstrictのまま400 | `test/ingress/sender-handle.test.ts`, `test/sender-handle-store.test.ts` |
+| JE-SH8 | 家族の管理コマンドは無返信でcommand_not_allowed。全ジョブ列と受信記録を変えず、オーナーはqueued取消とclaimedの取消要求が可能 | `test/ingress/sender-handle.test.ts` |
+| JE-SH9 | 家族の上限超過はtoo_long返信を一度だけ作る | `test/ingress/sender-handle.test.ts` |
+| JE-SH10 | 家族のbot_replyとemptyは保存しない | `test/ingress/sender-handle.test.ts` |
+| JE-SH11 | ハンドル変更と並行再送、自分のキーなし再送でも最初のジョブを保持。家族のキーなしは無視 | `test/ingress/sender-handle.test.ts` |
+| JE-SH12 | v0/v1/v2からv3、再open、NULL、sequence保持、長さCHECK、未来v4拒否 | `test/migration-genie.test.ts` |
+| JE-SH13 | get/claim/complete/fail/cancel/retryはsender_handleを返し、list/eventsは返さない | `test/sender-handle-store.test.ts` |
+| JE-SH14 | Worker processに文字列かnullを渡す。旧応答の欠落はnull。Outcomeに値がない | `test/worker/sender-handle.test.ts` |
+| JE-SH15 | /statusの文面は依頼者表示を追加せず、ハンドルを含まない | `test/ingress/sender-handle.test.ts` |
+| JE-SH15b | 本文中のメールはackと/genie/repliesで伏せる | `test/ingress/sender-handle.test.ts` |
+| JE-SH15c | URL内の一致値を通知と/statusで伏せ、無関係な長いパスとクエリを保つ。ハンドルなしの文は変わらない | `test/ingress/sender-handle.test.ts`, `test/sender-handle-store.test.ts` |
+| JE-SH16 | 全ライフサイクルのログと入れ子のsender_handleを伏せる | `test/sender-handle-store.test.ts` |
+| JE-SH17 | complete/fail/POST outboxとerror.messageで全体と接頭辞なしを大小文字を区別せず伏せ、URLを保つ | `test/sender-handle-store.test.ts` |
+| JE-SH18 | 400/409/500の固定エラー応答とログに値がない | `test/ingress/sender-handle.test.ts`, `test/sender-handle-store.test.ts` |
+| JE-SH19 | lease切れのreconcile報告/eventsに値がなく、従来のGenie通知を保つ | `test/sender-handle-store.test.ts` |
+| JE-SH20 | 契約、設定、v3移行、デプロイ順、Workerの扱い、実機未確認を文書化し、全テストの置き場所が存在 | `test/docs.test.ts` |
+| JE-SH21 | 秘密検査とhygieneで電話の連続数字や個人情報を検出しない | `test/secrets.test.ts`, `test/hygiene.test.ts` |
+| JE-SH22 | SPECとWorkerに既定は無効とmemberのオーナー権限・有効化の前提を明記 | `test/docs.test.ts` |

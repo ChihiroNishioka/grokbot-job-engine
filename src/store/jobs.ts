@@ -1,6 +1,7 @@
 import type { Deps,CreateInput,ClaimInput,TokenInput,CompleteInput,FailInput,ListInput,Job,Event } from './types.js';
 import { randomToken } from '../lib/ids.js';
 import { mask } from '../logging/mask.js';
+import { redactHandle } from '../logging/redact-handle.js';
 import { StoreError } from './errors.js';
 import { readEvents, writeEvent } from './events.js';
 import { OutboxStore } from './outbox.js';
@@ -29,8 +30,8 @@ export class JobStore {
       if(!counter) throw new Error('Missing job counter');
       const id=`J-${String(counter.value).padStart(6,'0')}`;
       const now=clock.now();
-      db.prepare(`INSERT INTO jobs(job_id,source,source_message_id,source_chat_id,requester_id,job_type,request_text,payload_ref,status,priority,scheduled_at,created_at,updated_at,max_attempts,correlation_id,parent_job_id)
-        VALUES (?,?,?,?,?,?,?,?,'queued',?,?,?,?,?,?,?)`).run(id,input.source,input.source_message_id,input.source_chat_id,input.requester_id,input.job_type??'general',input.request_text??null,input.payload_ref??null,input.priority??0,input.scheduled_at?Date.parse(input.scheduled_at):null,now,now,input.max_attempts??config.JOB_MAX_ATTEMPTS_DEFAULT,input.correlation_id??null,input.parent_job_id??null);
+      db.prepare(`INSERT INTO jobs(job_id,source,source_message_id,source_chat_id,requester_id,job_type,request_text,payload_ref,status,priority,scheduled_at,created_at,updated_at,max_attempts,correlation_id,parent_job_id,sender_handle)
+        VALUES (?,?,?,?,?,?,?,?,'queued',?,?,?,?,?,?,?,?)`).run(id,input.source,input.source_message_id,input.source_chat_id,input.requester_id,input.job_type??'general',input.request_text??null,input.payload_ref??null,input.priority??0,input.scheduled_at?Date.parse(input.scheduled_at):null,now,now,input.max_attempts??config.JOB_MAX_ATTEMPTS_DEFAULT,input.correlation_id??null,input.parent_job_id??null,input.sender_handle??null);
       writeEvent(db,{job_id:id,at:now,actor:'api',type:'job.created',to_status:'queued'});
       return {job:this.get(id),created:true};
     }).immediate();
@@ -98,7 +99,8 @@ export class JobStore {
   fail(id:string,input:FailInput):{job:Job} {
     const {db,clock}=this.deps;
     return db.transaction(()=>{
-      const now=clock.now(); const error=JSON.stringify({code:input.error.code,message:mask(input.error.message)});
+      const now=clock.now(); const handle=this.get(id).sender_handle;
+      const error=JSON.stringify({code:input.error.code,message:redactHandle(mask(input.error.message),handle)});
       const changed=db.prepare("UPDATE jobs SET status=CASE WHEN cancel_requested=1 THEN 'cancelled' ELSE 'failed' END,error=?,updated_at=? WHERE job_id=? AND status='claimed' AND claim_token=? AND lease_expires_at>?").run(error,now,id,input.claim_token,now).changes;
       if(changed!==1)return {job:this.rejectWorker(id,input,'fail')};
       const row=this.get(id);
@@ -119,7 +121,7 @@ export class JobStore {
       const changed=db.prepare("UPDATE jobs SET status=CASE WHEN status='queued' THEN 'cancelled' ELSE status END,cancel_requested=1,updated_at=? WHERE job_id=? AND (status='queued' OR (status='claimed' AND cancel_requested=0))").run(now,id).changes;
       const row=this.get(id);
       if(changed!==1){if(row.status==='cancelled'||(row.status==='claimed'&&row.cancel_requested===1))return {job:row};throw new StoreError('INVALID_TRANSITION');}
-      writeEvent(db,{job_id:id,at:now,actor:'api',type:row.status==='cancelled'?'job.cancelled':'job.cancel_requested',from_status:row.status==='cancelled'?'queued':'claimed',to_status:row.status,reason:input.reason});
+      writeEvent(db,{job_id:id,at:now,actor:'api',type:row.status==='cancelled'?'job.cancelled':'job.cancel_requested',from_status:row.status==='cancelled'?'queued':'claimed',to_status:row.status,reason:input.reason===undefined?undefined:redactHandle(input.reason,row.sender_handle)});
       return {job:row};
     }).immediate();
   }
@@ -130,7 +132,7 @@ export class JobStore {
       const changed=db.prepare(`UPDATE jobs SET status='queued',${clearClaim},cancel_requested=0,updated_at=? WHERE job_id=? AND status='failed' AND attempts<max_attempts`).run(now,id).changes;
       const row=this.get(id);
       if(changed!==1){if(row.status==='failed'&&row.attempts>=row.max_attempts)throw new StoreError('MAX_ATTEMPTS_REACHED');throw new StoreError('INVALID_TRANSITION');}
-      writeEvent(db,{job_id:id,at:now,actor:'api',type:'job.retried',from_status:'failed',to_status:'queued',reason:input.reason});
+      writeEvent(db,{job_id:id,at:now,actor:'api',type:'job.retried',from_status:'failed',to_status:'queued',reason:input.reason===undefined?undefined:redactHandle(input.reason,row.sender_handle)});
       return {job:row};
     }).immediate();
   }

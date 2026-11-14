@@ -6,8 +6,8 @@ export function jobJson(row: Job, summary = false) {
   void claim_token;
   const full = {...rest, scheduled_at:iso(row.scheduled_at),created_at:iso(row.created_at),updated_at:iso(row.updated_at),claimed_at:iso(row.claimed_at),lease_expires_at:iso(row.lease_expires_at),heartbeat_at:iso(row.heartbeat_at),cancel_requested:row.cancel_requested===1,result:parse(row.result),error:parse(row.error),artifact_urls:parse(row.artifact_urls)};
   if (!summary) return full;
-  const {request_text,result,...item}=full;
-  void request_text; void result;
+  const {request_text,result,sender_handle,...item}=full;
+  void request_text; void result; void sender_handle;
   return item;
 }
 export function outboxJson(row: Outbox) {

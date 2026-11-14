@@ -522,3 +522,55 @@ Genie の `HTTPReplySource`（Sources/GenieCore/ReplySource.swift）の形に合
 - artifact_urls は API complete・CLI・runWorkerOnce で同じスキーマを使う。20件以内、各1200コードポイント以内、空白・制御文字なしの HTTPS URL。runWorkerOnce は process の返却後、complete 前に検証し、不正なら complete を送らず fail の INVALID_ARTIFACT にする。error.message に規則だけを残し、URL本文は残さない。結果は保存せず、失敗として明示する。fail 成功後は lease 失効でも再キューされない。CLI は不正入力を終了コード2、APIは400で拒否する。
 - 成功した Worker と CLI complete の戻り値に artifact_urls_omitted を付ける。通知本文の独立した行として完全な形で載らなかった URL の件数で、0なら省略する。独自notifyにも適用し、CLIの --no-notify は全件が未掲載となる。notify_truncated / notify_replaced / artifact_urls_omitted は成功時だけ付け、失敗・通信障害には付けない。
 - 変更前に保存された長大URLは自動変換しない。単独でも見出しと案内を含め1500に入らない既存URLがあれば、/status は表示上限と短いURLでの再登録が必要な旨を返し、URLを途中で切らない。
+
+## 14. 家族のグループからのジョブ
+
+この章は13章の「受け付けるのは自分宛てのトークだけ」を改める。通常の webhook 経路は変えない。`GENIE_GROUP_CHAT_IDS` の既定は無効で、空なら従来どおり家族の依頼を無視する。
+
+**`member` のジョブはオーナーの道具と権限で動く。`GENIE_GROUP_CHAT_IDS` を設定する前に、Routine 側で member に許す操作を決めること。** 有効化にはこの方針のオーナー確認を要する。操作の制限は Routine の責任で、Job Engine は送信者ごとの権限管理を行わない。
+
+### 14.1 設定と形式
+
+`GENIE_GROUP_CHAT_IDS` はカンマ区切りの安全な整数。未設定、空文字、空白だけの要素は空として扱う。全要素が `GENIE_ALLOWED_CHAT_IDS` に必要で、違反時は `ConfigError` の fields を `['GENIE_GROUP_CHAT_IDS']` とし、値はメッセージに含めない。`GENIE_ALLOWED_CHAT_IDS` は引き続き `ALLOWED_SOURCE_CHAT_IDS` の部分集合。
+
+Ingress の strict スキーマだけに任意の `sender_handle` を足す。値は次のいずれかに一致する ASCII 文字列で、1〜256字。正規化や trim はしない。
+
+- 電話は `^tel:\+?[0-9]{1,20}$`。
+- メールは `` ^email:[a-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@[a-z0-9-]+(\.[a-z0-9-]+)+$ ``。
+
+`null`、数値、空文字、大文字のメール、空白、制御文字、未知のキーは400 `VALIDATION_ERROR`。`sender_is_me=true` と `sender_handle` の同時指定も400。エラー文は固定文で値を含めない。Job API の `POST /jobs` は引き続きこのキーを受け付けない。
+
+### 14.2 受付の順番と冪等性
+
+1. スキーマ検証を行う。形式違反は許可外 chat でも403より先に400。
+2. `GENIE_ALLOWED_CHAT_IDS` に無い chat_id は403。
+3. `sender_is_me=false` で、グループ設定に無いかハンドルが無ければ200 `ignored/not_from_me`。受信記録を残さない。
+4. 既存規則の `bot_reply` と `empty` を適用する。
+5. 同じ guid があれば既存の応答を200で返す。chat_id 違いだけ409。ハンドルや sender_is_me の違いで既存列を変更しない。再送からハンドルが消えた場合は手順3で無視する。
+6. 本文の文字数上限を適用する。家族にも `too_long` の返信を一度だけ作る。
+7. 家族の `/help`、`/status`、`/cancel`、`/retry` は200 `{status:"ignored",reason:"command_not_allowed"}`。返信、outbox、受信記録、ジョブへの操作は行わない。オーナーは従来どおり元トークから操作できる。
+8. ジョブ、ack、受信記録を同一トランザクションで作る。家族は requester_id=`member` と受信した sender_handle、自分は requester_id=`self` と NULL。
+
+### 14.3 保存、受け渡し、伏せ方
+
+DB v3 は jobs に nullable な `sender_handle TEXT CHECK (sender_handle IS NULL OR length(sender_handle) BETWEEN 1 AND 256)` を追加する。列追加と user_version=3 は1トランザクション。v0、v1、v2から繰り返し移行でき、既存行はNULL。4以上の版は拒否する。ダウングレードは提供しない。
+
+認証済み Job API の get、claim、complete、fail、cancel、retry の job に文字列かnullを返す。list、events、Reconciler の報告には含めない。Worker の process は job.sender_handle を読める。旧サーバーの応答でキーが無ければnullにする。Outcome に値を加えない。Worker の扱いは [Worker の手順](worker.md#送信者ハンドルを扱う) に従う。
+
+ログは入れ子を含め sender_handle キーを伏せ、値を文やイベントに埋め込まない。`redactHandle(text, handle)` が保存値全体と接頭辞を除いた部分を大小文字を区別せず `[REDACTED]` にする。対象は受付ack、complete/failのnotify.body、POST /outboxのbody、保存前のfail error.message、/statusの全文、cancel/retryの返信。ハンドルがnullなら文を変えない。error.messageは従来のmaskの後にこの処理を通す。
+
+通知には新しく mask() をかけない。成果物URLの無関係な長いパスとクエリはそのまま残す。ハンドルがURL内にあれば一致部分だけ伏せる。`/status` に依頼者の表示欄は追加しない。書式違いの電話番号、例えば `+1 555 010 0000` のような区切り入りの表記は一致対象外。
+
+### 14.4 デプロイの順番と停止
+
+Job Engine を先に更新する。新Genieを旧Job Engineに接続すると、家族のsender_handle付き要求が400になり再送されずdeadletterになる。
+
+1. DBをバックアップする。v3を旧版では開けない。
+2. Job Engineを更新し、GENIE_GROUP_CHAT_IDSは空で起動する。
+3. Genieを更新する。
+4. Routineのmember方針を確認し、Job EngineのALLOWED_SOURCE_CHAT_IDS、GENIE_ALLOWED_CHAT_IDS、GENIE_GROUP_CHAT_IDSに対象グループを追加して再起動する。
+5. Genieのgroup_chat_guidsとjob_chat_idsに対象グループを設定する。job_chat_idsを先に足すと403で自分の依頼も失われうる。
+
+Genieのjob_chat_idsから外すと新しいメッセージは通常webhookへ戻る。再試行中のメッセージは初回に決めた経路のまま。家族の新しい受付を止めるにはGENIE_GROUP_CHAT_IDSを空にして再起動する。作成済みのジョブはオーナーが元トークから/cancelする。旧版へ戻すにはバックアップを使う。v3移行後の新しいジョブはバックアップに含まれない。
+
+マスクで文字数が増える場合も、通知は置換後に既存の1500コードポイント制限を適用する。独自notify.bodyは従来と同じく途中で切られる場合がある。`/status` はマスクした表示用URLでページを構成し、単独でも収まらないURLは途中で切らず表示上限と再登録の案内を返す。保存済みのartifact_urlsは変更しない。

@@ -32,3 +32,22 @@ test('fix2 docs worker lists safe failure codes and explains message storage', (
   const text = readFileSync('docs/worker.md', 'utf8');
   for (const required of ['TIMEOUT', 'SOURCE_UNAVAILABLE', 'INVALID_REQUEST', 'PERMISSION_REQUIRED', 'PROCESSING_ERROR', '処理が時間切れになりました', '参照先を利用できません', '依頼の内容を確認してください', '処理に必要な権限がありません', 'error.message', '通知に出さず', '{ok:false, code', 'マスクして保存']) expect(text).toContain(required);
 });
+
+test('JE-SH20 sender handle contract and deployment are documented', () => {
+  const spec = readFileSync('docs/SPEC.md', 'utf8');
+  for (const term of ['## 14.', 'GENIE_GROUP_CHAT_IDS', 'command_not_allowed', 'member', '^tel:', '^email:', '1,20', '1,64', '256', 'バックアップ', 'Job Engine を先に', 'ダウングレード']) expect(spec, term).toContain(term);
+  const genie = readFileSync('docs/genie.md', 'utf8');
+  for (const term of ['"sender_handle": "email:family@example.com"', 'GENIE_GROUP_CHAT_IDS', 'command_not_allowed', '400', '403', 'not_from_me']) expect(genie, term).toContain(term);
+  expect(genie).not.toContain('受け付けるのは自分宛てのトークだけ');
+  const worker = readFileSync('docs/worker.md', 'utf8');
+  for (const term of ['sender_handle', '個人情報', '書き写さない', 'claim / get / complete / fail', 'requester_id', 'member', 'self']) expect(worker, term).toContain(term);
+  expect(readFileSync('.env.example', 'utf8')).toMatch(/^GENIE_GROUP_CHAT_IDS=$/m);
+  expect(readFileSync('docs/status.md', 'utf8')).toContain('送信者ハンドル');
+  const green = readFileSync('docs/GREEN.md', 'utf8');
+  for (let i = 1; i <= 22; i++) expect(green, `JE-SH${i}`).toContain(`JE-SH${i}`);
+});
+
+test.each(['docs/SPEC.md', 'docs/worker.md'])('JE-SH22/A1 member authority prerequisite and disabled default in %s', path => {
+  const text = readFileSync(path, 'utf8');
+  for (const term of ['既定は無効', 'member', 'オーナーの道具と権限で動く', 'GENIE_GROUP_CHAT_IDS', 'Routine 側で member に許す操作を決めること']) expect(text, term).toContain(term);
+});
