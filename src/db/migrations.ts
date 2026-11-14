@@ -205,12 +205,36 @@ function migrateV4(db: Database.Database): void {
   }
 }
 
+function migrateV5(db: Database.Database): void {
+  const version = Number(db.pragma('user_version', { simple: true }));
+  if (version === 5) return;
+  if (version !== 4) throw new Error('Unsupported database version');
+  db.transaction(() => {
+    const current = Number(db.pragma('user_version', { simple: true }));
+    if (current === 5) return;
+    if (current !== 4) throw new Error('Unsupported database version');
+    db.exec(`CREATE TABLE operator_actions (
+      action_id TEXT PRIMARY KEY,
+      job_id TEXT NOT NULL REFERENCES jobs(job_id),
+      actor TEXT NOT NULL CHECK (actor='dashboard:owner'),
+      action TEXT NOT NULL CHECK (action IN ('approve','reject','retry','reveal_request','reveal_result')),
+      expected_state TEXT,
+      request_hash TEXT NOT NULL,
+      outcome TEXT NOT NULL CHECK (outcome IN ('applied','stale','rejected','revealed')),
+      reason_code TEXT,
+      result_state TEXT,
+      at INTEGER NOT NULL
+    );
+    PRAGMA user_version=5;`);
+  }).immediate();
+}
+
 export function migrate(db: Database.Database): void {
   const version = Number(db.pragma('user_version', { simple: true }));
-  if (version === 4) return;
-  if (version < 0 || version > 4) throw new Error('Unsupported database version');
+  if (version === 5) return;
+  if (version < 0 || version > 5) throw new Error('Unsupported database version');
   if (version < 2) migrateV2(db);
-  const afterV2 = Number(db.pragma('user_version', { simple: true }));
-  if (afterV2 === 2) migrateV3(db);
-  migrateV4(db);
+  if (Number(db.pragma('user_version', { simple: true })) === 2) migrateV3(db);
+  if (Number(db.pragma('user_version', { simple: true })) === 3) migrateV4(db);
+  migrateV5(db);
 }

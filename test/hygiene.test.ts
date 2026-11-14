@@ -30,3 +30,21 @@ test('G49 tests never open ports or wait using timers and CI exposes all quality
   const workflow = fs.readFileSync('.github/workflows/ci.yml', 'utf8');
   for (const script of ['lint', 'typecheck', 'test', 'check:secrets']) expect(workflow).toContain(`npm ${script === 'test' ? 'test' : `run ${script}`}`);
 });
+
+test('D33 dashboard assets use no external scripts, fonts, CDN, or network endpoints', () => {
+  const dashboardFiles = [...files('src/dashboard'), ...files('e2e')].filter(file => /\.(ts|js|css|html)$/.test(file));
+  const contents = dashboardFiles.map(file => fs.readFileSync(file, 'utf8')).join('\n');
+  expect(contents).not.toMatch(/https?:\/\/[^'"\s)]*(?:cdn|fonts\.)/i);
+  expect(contents).not.toMatch(/<script[^>]+src=["']https?:/i);
+  expect(contents).not.toMatch(/@import\s+url\s*\(/i);
+});
+
+test('D35 dashboard environment examples contain every required key and only dummy values', () => {
+  const example = fs.readFileSync('.env.example', 'utf8');
+  for (const key of ['DASHBOARD_TOKEN', 'DASHBOARD_HOST', 'DASHBOARD_PORT', 'DASHBOARD_ALIAS_KEY', 'DASHBOARD_ALIASES']) {
+    expect(example).toMatch(new RegExp(`^${key}=`, 'm'));
+  }
+  expect(example).toMatch(/^DASHBOARD_TOKEN=dummy-.{32,}$/m);
+  expect(example).toMatch(/^DASHBOARD_ALIAS_KEY=dummy-.{32,}$/m);
+  expect(example).toMatch(/^DASHBOARD_ALIASES=\{\}$/m);
+});

@@ -1,4 +1,7 @@
 import { Server } from 'node:http';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { ServerType } from '@hono/node-server';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
@@ -10,6 +13,7 @@ let lines: string[];
 let stderr: ReturnType<typeof vi.spyOn>;
 let originalExitCode: typeof process.exitCode;
 let signals: { int: ((signal: 'SIGINT') => void)[]; term: ((signal: 'SIGTERM') => void)[] };
+let databaseDir: string;
 beforeEach(() => {
   vi.resetModules();
   servers.length = 0;
@@ -18,9 +22,13 @@ beforeEach(() => {
   signals = { int: process.listeners('SIGINT'), term: process.listeners('SIGTERM') };
   vi.stubEnv('JOB_API_TOKEN', 'dummy-job-'.repeat(5));
   vi.stubEnv('GENIE_TOKEN', 'dummy-genie-'.repeat(5));
+  vi.stubEnv('DASHBOARD_TOKEN', 'dummy-dashboard-token-'.repeat(2));
+  vi.stubEnv('DASHBOARD_ALIAS_KEY', 'dummy-dashboard-alias-key-'.repeat(2));
+  vi.stubEnv('DASHBOARD_ALIASES', '{}');
   vi.stubEnv('ALLOWED_SOURCE_CHAT_IDS', '21');
   vi.stubEnv('GENIE_ALLOWED_CHAT_IDS', '21');
-  vi.stubEnv('DATABASE_PATH', ':memory:');
+  databaseDir = mkdtempSync(join(tmpdir(), 'job-engine-main-'));
+  vi.stubEnv('DATABASE_PATH', join(databaseDir, 'jobs.sqlite'));
   vi.stubEnv('RECONCILE_INTERVAL_SECONDS', '0');
   vi.spyOn(process.stdout, 'write').mockImplementation(chunk => { lines.push(String(chunk)); return true; });
   stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
@@ -33,11 +41,13 @@ afterEach(() => {
   process.exitCode = originalExitCode;
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
+  rmSync(databaseDir, { recursive: true, force: true });
 });
 
 test.each([
   [0, 'job_api', 'EADDRINUSE'], [0, 'job_api', 'EADDRNOTAVAIL'],
   [1, 'genie', 'EADDRINUSE'], [1, 'genie', 'EADDRNOTAVAIL'],
+  [2, 'dashboard', 'EADDRINUSE'], [2, 'dashboard', 'EADDRNOTAVAIL'],
 ] as const)('listen failure %s %s %s is one safe line and exit 1', async (index, listener, code) => {
   const { startMain } = await import('../src/main.js');
   startMain({ listen: () => undefined });
@@ -59,17 +69,17 @@ test('startup reports invalid environment names without values', async () => {
 });
 
 
-test('handlers precede injected listen and synchronous failure closes both listeners', async () => {
+test('handlers precede injected listen and synchronous failure closes all listeners', async () => {
   const { startMain } = await import('../src/main.js');
   const close = vi.spyOn(Server.prototype, 'close');
   const listen = vi.fn((server: ServerType) => {
-    expect(servers).toHaveLength(2);
+    expect(servers).toHaveLength(3);
     expect(servers.every(item => item.listenerCount('error') > 0)).toBe(true);
     server.emit('error', Object.assign(new Error('dummy-private-address'), { code: 'EADDRINUSE' }));
   });
   startMain({ listen });
   expect(listen).toHaveBeenCalledTimes(1);
-  expect(close).toHaveBeenCalledTimes(2);
+  expect(close).toHaveBeenCalledTimes(3);
   expect(process.exitCode).toBe(1);
   expect(lines).toEqual([JSON.stringify({ event: 'listen.failed', listener: 'job_api', code: 'EADDRINUSE' }) + '\n']);
   expect(stderr).not.toHaveBeenCalled();

@@ -3,7 +3,7 @@ import { redactHandle } from '../logging/redact-handle.js';
 import type { Job } from '../store/types.js';
 
 const statusText = { queued: '受付済み', claimed: '実行中', done: '完了', failed: '失敗', cancelled: 'キャンセル済み' };
-export function statusLabel(job: Job): string {
+export function statusLabel(job: Pick<Job, 'status' | 'policy_decision'>): string {
   if (job.status === 'queued' && job.policy_decision === 'hold') return '承認待ち';
   if (job.status === 'cancelled' && job.policy_decision === 'deny') return 'お断り';
   return statusText[job.status];

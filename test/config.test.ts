@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { ConfigError, loadConfig } from '../src/config/index.js';
 
-const valid = () => ({ JOB_API_TOKEN: 'dummy-'.repeat(8), ALLOWED_SOURCE_CHAT_IDS: 'chat-a,chat-b,21', GENIE_TOKEN: 'dummy-genie-'.repeat(4), GENIE_ALLOWED_CHAT_IDS: '21', OWNER_NOTIFY_CHAT_ID: '21' });
+const valid = () => ({ JOB_API_TOKEN: 'dummy-'.repeat(8), ALLOWED_SOURCE_CHAT_IDS: 'chat-a,chat-b,21', GENIE_TOKEN: 'dummy-genie-'.repeat(4), DASHBOARD_TOKEN: 'dummy-dashboard-token-'.repeat(2), DASHBOARD_ALIAS_KEY: 'dummy-dashboard-alias-key-'.repeat(2), DASHBOARD_ALIASES: '{}', GENIE_ALLOWED_CHAT_IDS: '21', OWNER_NOTIFY_CHAT_ID: '21' });
 const ranges = {
   PORT: [1, 65535], LEASE_SECONDS_DEFAULT: [10, 3600], LEASE_SECONDS_MAX: [10, 86400],
   JOB_MAX_ATTEMPTS_DEFAULT: [1, 10], REQUEST_TEXT_MAX_CHARS: [1, 100000],

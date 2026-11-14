@@ -11,3 +11,5 @@ coverage/
 *.sqlite
 *.log
 data/
+playwright-report/
+test-results/

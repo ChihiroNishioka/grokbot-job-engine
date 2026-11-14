@@ -15,3 +15,16 @@ export function openDb(path: string): Database.Database {
     throw error;
   }
 }
+
+export function openReadonlyDb(path: string): Database.Database {
+  if (path === ':memory:') throw new Error('Read-only database requires a file path');
+  const db = new Database(path, { readonly: true, fileMustExist: true });
+  try {
+    db.pragma('busy_timeout=5000');
+    db.pragma('foreign_keys=ON');
+    return db;
+  } catch (error) {
+    db.close();
+    throw error;
+  }
+}

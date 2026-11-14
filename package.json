@@ -7,12 +7,13 @@
     "node": ">=24"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && node scripts/copy-dashboard-assets.mjs",
     "start": "node --env-file=.env dist/main.js",
     "dev": "tsx --env-file=.env src/main.ts",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:ui": "playwright test --config=playwright.config.ts",
     "check:secrets": "node scripts/check-secrets.mjs"
   },
   "dependencies": {
@@ -23,6 +24,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.65.1",
     "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^26.6.6",
     "eslint": "^10.14.0",
@@ -32,7 +34,9 @@
     "vitest": "^5.1.0"
   },
   "allowScripts": {
+    "@playwright/test": false,
     "esbuild@0.28.2": true,
-    "better-sqlite3": false
+    "better-sqlite3": false,
+    "playwright": false
   }
 }
