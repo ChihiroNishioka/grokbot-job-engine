@@ -374,7 +374,7 @@ interface WakeDispatcher { wake(): Promise<WakeResult> }
 | 決定 | 反映 |
 |---|---|
 | 入口と出口は Grok Bot 組み込みの Messages 機能（Genie ではない） | Phase 0 の案（Genie と Notion の「返事」DB）は採らない。outbox は `channel='imessage'`、`target_chat_id`、`in_reply_to` だけを持ち、Notion に依存する列は持たない。source_chat_id と source_message_id の形式は確認できていないので、中身を解釈しない文字列（256 字以内）として扱う。**リスク**: Phase 0 の調査では、SendIMessage は送るたびに承認が要り、Routine から出た承認カードは 30 分で期限切れになる。このため、無人の完了通知は pending のまま残る可能性がある。そのときは Reconciler の staleOutbox で見えるようにする（Phase 2/3 で確認する） |
-| 自分宛てトークだけ受け付ける | ALLOWED_SOURCE_CHAT_IDS を必須にし、それ以外からの create は 403 にする。outbox の宛先はジョブから写し、入力では受け取らない |
+| 自分宛てトークだけ受け付ける（14章で置き換え） | ALLOWED_SOURCE_CHAT_IDS を必須にし、それ以外からの create は 403 にする。outbox の宛先はジョブから写し、入力では受け取らない |
 | box→Mac mini は Tailscale の中だけ | 既定は 127.0.0.1 で待ち受ける。Phase 0 の第二候補（Funnel に `/jobs` を足す）、Webhook の HMAC、リプレイ対策は作らない（Phase 1 には外から受ける webhook がないため） |
 
 ### 元の指示や参考実装との違い（Phase 1 の設計判断）
@@ -414,7 +414,7 @@ interface WakeDispatcher { wake(): Promise<WakeResult> }
 
 ## 13. 方針変更（オーナー、11/11 03:11）：入口と出口は Mac mini の Genie
 
-11 章の「入口と出口は Grok Bot 組み込みの Messages 機能」は取り消す。Routine の実行中には組み込みの Messages ツールが渡らないと分かったため。入口と出口は Mac mini の Genie（genie-in-messages）にする。受け付けるのは自分宛てのトークだけ。この章は 1〜12 章より優先する。
+11 章の「入口と出口は Grok Bot 組み込みの Messages 機能」は取り消す。Routine の実行中には組み込みの Messages ツールが渡らないと分かったため。入口と出口は Mac mini の Genie（genie-in-messages）にする。自分宛てのトークだけを受け付ける当時の方針は14章で置き換える。この章は 1〜12 章より優先する。
 
 ### 13.1 待ち受けを 2 つに分ける
 
@@ -427,22 +427,22 @@ interface WakeDispatcher { wake(): Promise<WakeResult> }
 - `GENIE_HOST` は `127.0.0.1`、`::1`、`localhost` のどれかだけを許す。ほかは起動しない。
 - `HOST` は Mac mini では tailnet 上の自分のアドレスを `.env` に書く（値はリポジトリに書かない）。`net.isIP()` で IP リテラルであることを求め、正規化後に未指定アドレス（`0.0.0.0`、`::` とその別表記、IPv4-mapped の `::ffff:0.0.0.0`）を拒否する。`0`、`0.0.0.00`、`localhost` を含むホスト名も起動しない。Funnel には出さない。
 - トークンは分ける。`GENIE_TOKEN`（32 字以上。Ingress だけに効く）と `JOB_API_TOKEN`（Job API だけに効く）。同じ値なら起動しない。
-- `GENIE_ALLOWED_CHAT_IDS`（必須、カンマ区切りの整数）。自分宛てトークの chat_id だけを書く。Ingress から作るジョブの source_chat_id はここに入っていなければならないので、`ALLOWED_SOURCE_CHAT_IDS` にも同じ値を入れる。
+- `GENIE_ALLOWED_CHAT_IDS`（必須、カンマ区切りの整数）。自分宛てトークと、14章で有効にした家族グループの chat_id を書く。`GENIE_GROUP_CHAT_IDS` の値も含める。Ingress から作るジョブの source_chat_id はここに入っていなければならないので、`ALLOWED_SOURCE_CHAT_IDS` にも同じ値を入れる。
 
 ### 13.2 `POST /ingress/genie`（Genie の webhook をそのまま受ける）
 
 - 認証: `Authorization: Bearer <GENIE_TOKEN>`。違えば 401。レート制限と本文サイズ上限は Job API と同じ。
 - 本文（Genie の `WebhookPayload` と同じ。strict）:
-  `{v:1, event:"message", idempotency_key:string, guid:string, chat_id:integer, text:string, created_at:string|null, sender_is_me:boolean, sender_name:string}`。`guid` と `idempotency_key` は 1〜256 字で同じ値。違えば 400。
+  `{v:1, event:"message", idempotency_key:string, guid:string, chat_id:integer, text:string, created_at:string|null, sender_is_me:boolean, sender_name:string, sender_handle?:string}`。`sender_handle` は14章の家族グループの依頼で任意に付く。`guid` と `idempotency_key` は 1〜256 字で同じ値。違えば 400。
 - 判定の順番（上で決まったら終わり）:
   1. chat_id が `GENIE_ALLOWED_CHAT_IDS` に無い → 403 CHAT_NOT_ALLOWED（Genie は 4xx を再送しない）。
-  2. `sender_is_me` が false → 200 `{status:"ignored", reason:"not_from_me"}`。
+  2. `sender_is_me` が false で、14章のグループ設定がないか `sender_handle` がない → 200 `{status:"ignored", reason:"not_from_me"}`。設定済みグループからハンドル付きで届いた依頼は14.2に従う。
   3. 本文の先頭の空白・不可視文字と、先頭の 🪔（U+1FA94、続く U+FE0F と空白）を取り除く。残りの先頭が 🧞‍♂️（U+1F9DE U+200D U+2642、U+FE0F は任意。性別なしの 🧞 も含む）なら → 200 `{status:"ignored", reason:"bot_reply"}`（返信ループの防止）。
   4. 残りが空 → 200 `{status:"ignored", reason:"empty"}`。
   5. 同じ guid を前に受けていれば（ジョブでもコマンドでも）→ 200 で前回と同じ応答。行も outbox も増えない。
   6. 本文が REQUEST_TEXT_MAX_CHARS を超える → 200 `{status:"rejected",reason:"too_long"}`。同じトランザクションで `cmd:<guid>` の返信「依頼が長すぎます（最大 N 字）。短くして送り直してください。」を作り guid で冪等にする。
   7. 前後を trim した残りが `/help`、`/status`、`/cancel`、`/retry` で始まる本文 → 管理コマンド（13.3）。末尾の空白・改行・全角スペースを許す。それ以外の `/` 始まりは通常のジョブ。
-  8. それ以外 → ジョブを作る（source=`imessage`、source_message_id=guid、source_chat_id=chat_id の 10 進文字列、requester_id=`self`、job_type=`general`、request_text=残りの本文）。同じトランザクションで受付の outbox（kind=`ack`、キー `job:<job_id>:ack`）を作る。応答は 201 `{status:"created", job_id}`。
+  8. それ以外 → ジョブを作る（source=`imessage`、source_message_id=guid、source_chat_id=chat_id の 10 進文字列、requester_id は自分なら `self`、14章の家族なら `member`、job_type=`general`、request_text=残りの本文）。家族のジョブには `sender_handle` を保存する。同じトランザクションで受付の outbox（kind=`ack`、キー `job:<job_id>:ack`）を作る。応答は 201 `{status:"created", job_id}`。
 - 受け付けた guid は `ingress_messages`（guid PRIMARY KEY、chat_id、kind（job / command / ignored）、job_id、outbox_id、received_at、created_at）に残す（受信時刻と受付時刻の記録）。本文は保存しない（ジョブの request_text を除く）。
 - 本文、sender_name はログに出さない。
 
@@ -528,6 +528,8 @@ Genie の `HTTPReplySource`（Sources/GenieCore/ReplySource.swift）の形に合
 この章は13章の「受け付けるのは自分宛てのトークだけ」を改める。通常の webhook 経路は変えない。`GENIE_GROUP_CHAT_IDS` の既定は無効で、空なら従来どおり家族の依頼を無視する。
 
 **`member` のジョブはオーナーの道具と権限で動く。`GENIE_GROUP_CHAT_IDS` を設定する前に、Routine 側で member に許す操作を決めること。** 有効化にはこの方針のオーナー確認を要する。操作の制限は Routine の責任で、Job Engine は送信者ごとの権限管理を行わない。
+
+受付の返信には本文の先頭 40 字が入り、完了・失敗通知には `notify.body` の結果の要約や URL が入ることがある。どちらもグループのメンバー全員に見える。
 
 ### 14.1 設定と形式
 

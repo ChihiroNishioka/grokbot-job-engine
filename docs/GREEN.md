@@ -152,7 +152,7 @@
 | G62 | Ingress アプリに `/jobs` は 404、Job API アプリに `/ingress/genie` と `/genie/replies` は 404。Ingress は JOB_API_TOKEN では 401、Job API は GENIE_TOKEN では 401 | — | `test/ingress/apps.test.ts` |
 | G63 | 正しい Genie の payload（先頭 🪔）で 201 `{status:"created", job_id}`、ジョブが queued、request_text から 🪔 が除かれ、ack の outbox が 1 行（channel genie、キー `job:<id>:ack`、文面は 13.4 の受付）、ingress_messages に received_at が残る | 1, 2, 3（モック） | `test/ingress/genie.test.ts` |
 | G64 | 同じ guid を 3 回送る（Promise.all を含む）と、ジョブ・ack・ingress_messages はどれも 1 行で、2 回目以降は同じ job_id を返す | **8** | `test/ingress/genie.test.ts` |
-| G65 | 許可外の chat_id は 403 で行が増えない。sender_is_me=false は ignored で行が増えない（ingress_messages の ignored は可） | 13 | `test/ingress/genie.test.ts` |
+| G65 | 許可外の chat_id は 403 で行が増えない。`GENIE_GROUP_CHAT_IDS` が空か `sender_handle` が無いとき、sender_is_me=false は ignored で行が増えない（ingress_messages の ignored は可）。設定済みグループのハンドル付き依頼は member として受け付ける | 13, 14 | `test/ingress/genie.test.ts` |
 | G66 | 本文が `🧞‍♂️ 完了しました`、`🪔 🧞‍♂️ …`、`🧞 …`、先頭に空白のある `  🧞‍♂️…` は ignored（bot_reply）でジョブも outbox も作らない。空や 🪔 だけは ignored（empty） | **14** | `test/ingress/loop.test.ts` |
 | G67 | `/status`、`/cancel`、`/retry`、`/help` がそれぞれ 13.3 どおりに動き、command の outbox（キー `cmd:<guid>`）が 1 行できる。同じ guid の再送で再実行されない。status/cancel/retry は別の chat と存在しないジョブに同じ「ジョブが見つかりません。」を返し、存在を漏らさない | 7, **15** | `test/ingress/commands.test.ts` |
 | G68 | `GET /genie/replies`（cursor なし）が pending の genie 行を昇順で、13.5 の形（id `je-<n>`、chat_id 数値、in_reply_to_guid、created_at）で返し、cursor が最後の `o:<n>`。同じ cursor で取り直すと同じ内容。page の上限を超える分は次のページ | 2, 6（モック） | `test/ingress/replies.test.ts` |

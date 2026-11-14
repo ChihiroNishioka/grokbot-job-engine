@@ -51,3 +51,27 @@ test.each(['docs/SPEC.md', 'docs/worker.md'])('JE-SH22/A1 member authority prere
   const text = readFileSync(path, 'utf8');
   for (const term of ['既定は無効', 'member', 'オーナーの道具と権限で動く', 'GENIE_GROUP_CHAT_IDS', 'Routine 側で member に許す操作を決めること']) expect(text, term).toContain(term);
 });
+
+test('review fixes keep the family group exception and shared reply visibility clear', () => {
+  const spec = readFileSync('docs/SPEC.md', 'utf8');
+  const spec13 = spec.slice(spec.indexOf('## 13.'), spec.indexOf('## 14.'));
+  const spec11 = spec.slice(spec.indexOf('## 11.'), spec.indexOf('## 12.'));
+  expect(spec11).toContain('14章で置き換え');
+  for (const term of ['14章で置き換え', 'sender_handle?:string', '`GENIE_GROUP_CHAT_IDS` の値も含める', '14章の家族なら `member`']) expect(spec13, term).toContain(term);
+  for (const term of ['sender_is_me', '14章のグループ設定がないか', 'sender_handle` がない']) expect(spec13, term).toContain(term);
+
+  const readme = readFileSync('README.md', 'utf8');
+  expect(readme).toContain('家族グループの扱いは14章が13章を改めます');
+  expect(readme).toContain('家族グループの chat_id に置き換えます');
+  expect(readme).not.toContain('仕様13章が優先');
+  expect(readme).not.toContain('自分宛てトークの chat_id に置き換えます');
+
+  const green = readFileSync('docs/GREEN.md', 'utf8');
+  const g65 = green.slice(green.indexOf('| G65 |'), green.indexOf('| G66 |'));
+  for (const term of ['GENIE_GROUP_CHAT_IDS', 'sender_handle', 'ignored', 'member として受け付ける']) expect(g65, term).toContain(term);
+
+  for (const path of ['docs/SPEC.md', 'docs/genie.md', 'docs/worker.md']) {
+    const text = readFileSync(path, 'utf8');
+    for (const term of ['先頭 40 字', '完了・失敗', 'notify.body', '結果の要約', 'URL', 'グループのメンバー全員']) expect(text, `${path} requires ${term}`).toContain(term);
+  }
+});

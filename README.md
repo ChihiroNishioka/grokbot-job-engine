@@ -17,7 +17,7 @@ npm ci
 cp .env.example .env
 ```
 
-`.env` の `JOB_API_TOKEN` と `GENIE_TOKEN` を別々の32文字以上のランダムな値に変更します。`GENIE_ALLOWED_CHAT_IDS` には自分宛てトークの整数 ID をカンマ区切りで設定します。`ALLOWED_SOURCE_CHAT_IDS` にも同じ ID を入れます。例の値はダミーです。実際の秘密と個人情報は Git 管理外の `.env` だけに保存します。[仕様13章](docs/SPEC.md) が1〜12章に優先します。
+`.env` の `JOB_API_TOKEN` と `GENIE_TOKEN` を別々の32文字以上のランダムな値に変更します。`GENIE_ALLOWED_CHAT_IDS` には自分宛てトークと14章で有効にする家族グループの整数 ID をカンマ区切りで設定します。`GENIE_GROUP_CHAT_IDS` の ID も含めます。`ALLOWED_SOURCE_CHAT_IDS` にも同じ ID を入れます。例の値はダミーです。実際の秘密と個人情報は Git 管理外の `.env` だけに保存します。13章は1〜12章の当時の入口と出口を改めます。家族グループの扱いは14章が13章を改めます。
 
 待ち受けは2つです。
 
@@ -46,7 +46,7 @@ npm run dev
 
 Genie 側は genie-in-messages の別 PR、ブランチ `feat/job-engine-route` が前提です。この PR で `job_webhook_url`、`job_chat_ids`、`job-secret`、loopback の http 許可、Notion と並べた返信取得が入ります。PR がマージされるまでは今の Genie では使えません。
 
-Genie の設定（`config.json`）に足すキーの例は次のとおりです。`job_chat_ids` の数は、Mac mini 上で自分宛てトークの chat_id に置き換えます（Job Engine 側の `GENIE_ALLOWED_CHAT_IDS` と `ALLOWED_SOURCE_CHAT_IDS` にも同じ値が要ります。無いと Genie は `webhook_http_403` で止めます）。
+Genie の設定（`config.json`）に足すキーの例は次のとおりです。`job_chat_ids` の数は、Mac mini 上で自分宛てトークか14章で有効にする家族グループの chat_id に置き換えます（Job Engine 側の `GENIE_ALLOWED_CHAT_IDS` と `ALLOWED_SOURCE_CHAT_IDS` にも同じ値が要ります。無いと Genie は `webhook_http_403` で止めます）。
 
 ```json
 {
@@ -69,7 +69,7 @@ npm start
 
 ## API を使う
 
-`GET /healthz` 以外は Bearer 認証が必要です。入力と応答の詳細は [仕様6章](docs/SPEC.md) を参照してください。変更された入口・出口と経路は13章を優先します。Job API のルートは Ingress では公開しません。
+`GET /healthz` 以外は Bearer 認証が必要です。入力と応答の詳細は [仕様6章](docs/SPEC.md) を参照してください。入口・出口と経路は13章に記載し、家族グループは14章が13章を改めます。Job API のルートは Ingress では公開しません。
 
 | メソッド | パス | 操作 |
 |---|---|---|

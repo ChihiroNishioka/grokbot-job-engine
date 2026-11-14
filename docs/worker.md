@@ -153,6 +153,8 @@ API の 4xx は code と message を保持します。設定値、トークン�
 
 **`member` のジョブはオーナーの道具と権限で動く。`GENIE_GROUP_CHAT_IDS` を設定する前に、Routine 側で member に許す操作を決めること。** この方針をオーナーが確認してから有効化してください。Job Engine は操作ごとの権限を制限しません。
 
+受付の返信には本文の先頭 40 字が入り、完了・失敗通知には `notify.body` の結果の要約や URL が入ることがあります。どちらもグループのメンバー全員に見えます。
+
 依頼者の種類は `requester_id` の `self` と `member` で見分けます。`process({job})` の `job.sender_handle` は個人情報です。家族の正規化済みの `tel:` または `email:` 付き文字列で、自分のジョブはnullです。旧Job Engineがキーを返さなくてもWorkerはnullにそろえます。`runWorkerOnce` のOutcomeには含めません。
 
 worker-cli の claim / get / complete / fail の標準出力には生の `sender_handle` が出ます。Job API の cancel と retry の応答にも含まれます。Routine は結果、通知、ログに書き写さないでください。CLIの出力をRoutineの会話記録へ取り込む場合も個人情報が残りうるため、保存範囲をオーナーが確認してください。
