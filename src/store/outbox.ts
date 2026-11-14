@@ -1,6 +1,8 @@
-import type {Deps,Outbox,EnqueueInput,OutboxClaimInput,TokenInput} from './types.js';
+import type {Deps,Outbox,EnqueueInput,OutboxClaimInput,TokenInput,Job} from './types.js';
 import { randomToken } from '../lib/ids.js';
 import { mask } from '../logging/mask.js';
+import { truncate } from '../lib/reply-text.js';
+import { redactHandle } from '../logging/redact-handle.js';
 import { StoreError } from './errors.js';
 import { writeEvent } from './events.js';
 
@@ -15,15 +17,17 @@ export class OutboxStore {
     const {db,clock}=this.deps;
     return db.transaction(()=>{
       const existing=db.prepare<[string],Outbox>('SELECT * FROM delivery_outbox WHERE idempotency_key=?').get(input.idempotency_key);
+      if(existing && (existing.job_id!==input.job_id||existing.kind!==input.kind))throw new StoreError('IDEMPOTENCY_CONFLICT');
+      const job=db.prepare<[string],Pick<Job,'source_chat_id'|'source_message_id'|'sender_handle'>>('SELECT source_chat_id,source_message_id,sender_handle FROM jobs WHERE job_id=?').get(input.job_id);
+      if(!job)throw new StoreError('JOB_NOT_FOUND');
+      const body=job.sender_handle===null?input.body:truncate(redactHandle(input.body,job.sender_handle));
       if(existing){
-        if(existing.job_id!==input.job_id||existing.kind!==input.kind||existing.body!==input.body)throw new StoreError('IDEMPOTENCY_CONFLICT');
+        if(existing.body!==body)throw new StoreError('IDEMPOTENCY_CONFLICT');
         return {outbox:existing,created:false};
       }
-      const job=db.prepare<[string],{source_chat_id:string;source_message_id:string}>('SELECT source_chat_id,source_message_id FROM jobs WHERE job_id=?').get(input.job_id);
-      if(!job)throw new StoreError('JOB_NOT_FOUND');
       const now=clock.now();
       const channel=db.prepare<[string,string],{channel:string}>("SELECT 'genie' AS channel WHERE EXISTS (SELECT 1 FROM ingress_messages WHERE job_id=? AND kind='job') OR EXISTS (SELECT 1 FROM delivery_outbox WHERE job_id=? AND channel='genie')").get(input.job_id,input.job_id)?.channel??'imessage';
-      const inserted=db.prepare("INSERT INTO delivery_outbox(job_id,idempotency_key,kind,channel,target_chat_id,in_reply_to,body,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'pending',?,?)").run(input.job_id,input.idempotency_key,input.kind,channel,job.source_chat_id,job.source_message_id,input.body,now,now);
+      const inserted=db.prepare("INSERT INTO delivery_outbox(job_id,idempotency_key,kind,channel,target_chat_id,in_reply_to,body,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'pending',?,?)").run(input.job_id,input.idempotency_key,input.kind,channel,job.source_chat_id,job.source_message_id,body,now,now);
       const id=Number(inserted.lastInsertRowid);
       writeEvent(db,{job_id:input.job_id,outbox_id:id,at:now,actor:'api',type:'outbox.enqueued',to_status:'pending'});
       return {outbox:this.get(id),created:true};

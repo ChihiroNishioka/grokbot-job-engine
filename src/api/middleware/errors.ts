@@ -8,6 +8,7 @@ const messages: Record<string,[ContentfulStatusCode,string]> = {
   CHAT_NOT_ALLOWED:[403,'このトークからは受け付けません'], NOT_FOUND:[404,'見つかりません'], JOB_NOT_FOUND:[404,'見つかりません'],OUTBOX_NOT_FOUND:[404,'見つかりません'],
   IDEMPOTENCY_CONFLICT:[409,'同じメッセージ ID で内容が違います'],JOB_NOT_CLAIMABLE:[409,'claim できる状態ではありません'],OUTBOX_NOT_CLAIMABLE:[409,'claim できる状態ではありません'],
   INVALID_TRANSITION:[409,'この状態では実行できません'],CLAIM_TOKEN_MISMATCH:[409,'claim_token が一致しません'],LEASE_EXPIRED:[409,'lease の期限が切れています'],MAX_ATTEMPTS_REACHED:[409,'試行の上限に達しています'],
+  POLICY_DENIED:[400,'権限ポリシーで許可されていません'],POLICY_NOT_PENDING:[409,'承認待ちではありません'],
   PAYLOAD_TOO_LARGE:[413,'本文が大きすぎます'],RATE_LIMITED:[429,'リクエストが多すぎます'],INTERNAL:[500,'内部エラーです'],
 };
 export function errorResponse(c: Context, code: string) {

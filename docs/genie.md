@@ -35,27 +35,31 @@ Genie の設定（`config.json`）に足すキーの例は次のとおりです�
   "chat_id": 21,
   "text": "🪔 依頼本文",
   "created_at": null,
-  "sender_is_me": true,
-  "sender_name": "dummy-self"
+  "sender_is_me": false,
+  "sender_name": "dummy-member",
+  "sender_handle": "email:family@example.com"
 }
 ```
 
 `guid` と `idempotency_key` は同じ値で、長さは 1〜256 字。`chat_id` は安全に表現できる整数。`created_at` は文字列か null で、キーが無くてもよい（Genie の Swift の JSONEncoder は nil の optional のキーを省略するため）。
 
+例は設定済みグループの家族の依頼。`sender_handle` は任意で、自分のメッセージにはキーごと付けない。nullや空文字も受け付けない。形式は [仕様14章](SPEC.md#141-設定と形式) の契約に従い、1〜256字のASCII文字列に限る。Job Engineはtrimや正規化をしない。
+
 受け付ける順番は次のとおり。
 
-1. 許可外の chat_id を 403 `CHAT_NOT_ALLOWED` にする。Genie は通常の 4xx を再送しない。
-2. `sender_is_me=false` は 200 `{"status":"ignored","reason":"not_from_me"}` にする。
-3. 先頭の空白・不可視文字と先頭の 🪔、その直後の variation selector と空白を除く。残った先頭が性別なしを含む 🧞 なら `reason:"bot_reply"` として無視する。
-4. 残りが空なら `reason:"empty"` として無視する。
-5. 同じ guid の受付があれば、前回と同じ JSON を 200 で返す。ジョブ、コマンド、副作用を追加しない。許可済みの別 chat_id で同じ guid を使った場合は 409 にする。
-6. 文字数上限を超える本文は 200 `{"status":"rejected","reason":"too_long"}` とし、キー `cmd:<guid>` の返信「依頼が長すぎます（最大 N 字）。短くして送り直してください。」を同じトランザクションで記録する。同じ guid の再送は返信を増やさない。
-7. `/help`、`/status <job_id> [ページ]`、`/cancel <job_id>`、`/retry <job_id>` を管理コマンドとして処理する。前後の空白・改行・全角スペースを除いて判定する。既知のコマンドで ID が無いか形が違う場合は「コマンドを読めませんでした。」と使い方を返す。それ以外のスラッシュで始まる依頼は通常のジョブになる。
-8. それ以外をジョブとして作り、201 `{"status":"created","job_id":"J-000001"}` を返す。
+1. strictスキーマの形式と、`sender_is_me=true` にハンドルが付いていないことを検証する。違反は400 `VALIDATION_ERROR`。この検証は許可の判定より先に行う。
+2. 許可外の chat_id を 403 `CHAT_NOT_ALLOWED` にする。Genie は通常の 4xx を再送しない。
+3. `sender_is_me=false` で、chat_idが `GENIE_GROUP_CHAT_IDS` に無いかハンドルが無い場合は200 `{"status":"ignored","reason":"not_from_me"}` にする。
+4. 先頭の空白・不可視文字と先頭の 🪔、その直後の variation selector と空白を除く。残った先頭が性別なしを含む 🧞 なら `reason:"bot_reply"` として無視する。
+5. 残りが空なら `reason:"empty"` として無視する。
+6. 同じ guid の受付があれば、前回と同じ JSON を 200 で返す。ジョブ、コマンド、副作用を追加しない。許可済みの別 chat_id で同じ guid を使った場合は 409 にする。
+7. 文字数上限を超える本文は 200 `{"status":"rejected","reason":"too_long"}` とし、キー `cmd:<guid>` の返信「依頼が長すぎます（最大 N 字）。短くして送り直してください。」を同じトランザクションで記録する。同じ guid の再送は返信を増やさない。
+8. 家族の管理コマンドは200 `{"status":"ignored","reason":"command_not_allowed"}` とし、返信も受信記録も作らない。自分の `/help`、`/status <job_id> [ページ]`、`/cancel <job_id>`、`/retry <job_id>` を管理コマンドとして処理する。前後の空白・改行・全角スペースを除いて判定する。既知のコマンドで ID が無いか形が違う場合は「コマンドを読めませんでした。」と使い方を返す。それ以外のスラッシュで始まる依頼は通常のジョブになる。
+9. それ以外をジョブとして作り、201 `{"status":"created","job_id":"J-000001"}` を返す。
 
-ジョブの source は `imessage`、source_message_id は guid、source_chat_id は chat_id の 10 進文字列、requester_id は `self`、job_type は `general`。`GENIE_ALLOWED_CHAT_IDS` の値は `ALLOWED_SOURCE_CHAT_IDS` にも必要。request_text は印を除いた本文で、設定の文字数上限を適用する。
+ジョブの source は `imessage`、source_message_id は guid、source_chat_id は chat_id の 10 進文字列、requester_id は自分なら `self`、家族なら `member`。sender_handleは家族の受信値、自分はNULL。job_type は `general`。`GENIE_ALLOWED_CHAT_IDS` の値は `ALLOWED_SOURCE_CHAT_IDS` にも必要。request_text は印を除いた本文で、設定の文字数上限を適用する。
 
-受付のジョブ、ack outbox、`ingress_messages` の記録は同じトランザクションで作る。ack のキーは `job:<job_id>:ack`。本文は仕様 13.4 の受付文で、プレビューはコードポイントで先頭 40 字。受信記録には guid、chat_id、kind、job_id、outbox_id、received_at、created_at を残す。コマンド名も `command` 列に保存し、同じ guid に本文を変えて再送されても前回の応答を返せる。原文と sender_name はログに残さず、受信記録にも本文を保存しない。
+受付のジョブ、ack outbox、`ingress_messages` の記録は同じトランザクションで作る。ack のキーは `job:<job_id>:ack`。本文は仕様 13.4 の受付文で、プレビューはコードポイントで先頭 40 字。受信記録には guid、chat_id、kind、job_id、outbox_id、received_at、created_at を残す。コマンド名も `command` 列に保存し、同じ guid に本文を変えて再送されても前回の応答を返せる。原文と sender_name はログに残さず、受信記録にも本文を保存しない。sender_handleも受信記録に保存せず、jobsの列だけに保存する。同じguidの再送でハンドルやsender_is_meが変わっても最初の値を残す。ハンドルが消えた家族の再送は手順3で無視する。
 
 ## 管理コマンド
 
@@ -118,3 +122,19 @@ complete / fail と Reconciler の終端通知は `job:<job_id>:<kind>:<attempt>
 長い通知と独自の notify の扱いは [Worker の長い通知を送る手順](worker.md#長い通知を送る) を参照してください。通知の長さを理由に complete を止めたり処理を再実行したりしません。
 
 変更前に保存されたURLが単独でも表示上限を超える場合は、短いURLでの再登録が必要な旨を返します。途中で切ったURLは表示しません。Routine向けの省略件数と不正URLの扱いは [Workerの手順](worker.md#長い通知を送る) を参照してください。
+
+## 家族のグループを有効にする
+
+`GENIE_GROUP_CHAT_IDS` の既定は空で、家族の受付は無効です。空や空白だけのカンマ要素は除き、安全な整数として解析します。全要素がGENIE_ALLOWED_CHAT_IDSに必要で、その値はALLOWED_SOURCE_CHAT_IDSにも必要です。Genieはgroup_chat_guidsで照合したグループだけにsender_handleを付けます。メニューの許可だけでは付きません。1件でもグループを設定する場合は、オーナーの個人トークである `OWNER_NOTIFY_CHAT_ID` を設定してください。これは `GENIE_ALLOWED_CHAT_IDS` に含め、グループには含めません。
+
+有効化の前に [仕様14.5](SPEC.md#145-家族ジョブの権限ポリシー) のmember権限と、Routineが`allowed_capabilities`を構造的に守ることを確認してください。DBをバックアップし、Job Engine を先に更新して空のグループ設定でv4移行を確認します。その後Genieを更新し、Job Engineの許可設定と `OWNER_NOTIFY_CHAT_ID` を追加して再起動してから、Genieのjob_chat_idsにグループを足します。新Genieを旧Job Engineにつなぐとハンドル付き要求は400でdeadletterになります。
+
+受付の返信には本文の先頭 40 字が入り、完了・失敗通知には `notify.body` の結果の要約や URL が入ることがあります。これらの返信はグループのメンバー全員に見えます。
+
+グループの🪔は自分の依頼も含めJob Engineに向かいます。オーナーはジョブの元グループまたは `OWNER_NOTIFY_CHAT_ID` から家族のジョブに `/status`、`/cancel`、`/retry`、`/approve`（`/許可`）を使えます。`/approve` は hold のジョブだけを承認し、承認結果はコマンドを送ったトークへ返信します。通知トークから承認した場合、返信は通知トークにだけ届きます。deny のジョブは `/retry` できません。家族の管理コマンドは無返信で無視します。
+
+member の依頼は決定的なポリシーで `allow`、`deny`、`hold` に分類します。allow は通常どおり処理され、deny は cancelled として短い断りを返し、hold は claim を止めたままグループへ承認待ちの ack とオーナー個人トークへの通知を作ります。通知には承認後に許可する capability を表示します。承認通知はグループには送信しません。Routine は `allowed_capabilities` を守り、完了時に `used_capabilities` を送る必要があります。詳細は [仕様14.5](SPEC.md#145-家族ジョブの権限ポリシー) を参照してください。
+
+受付のプレビュー、完了と失敗の通知、/statusの成果物URL、cancelとretryの返信から、保存したハンドル全体と接頭辞を除いた部分を伏せます。英字の大小は区別しません。通知にはmask()を追加しないため、無関係なURLの長いパスとクエリは残ります。書式の違う電話番号まで伏せる保証はありません。値はWorkerに渡す以外、ログやイベントには出しません。
+
+家族の新しい受付を止めるにはGENIE_GROUP_CHAT_IDSを空にして再起動します。作成済みジョブはオーナーが/cancelしてください。Genieのjob_chat_idsから外すと新しいメッセージの経路が変わり、再試行中は初回の経路を保ちます。v4のDBは旧版で開けず、ダウングレードは用意しません。

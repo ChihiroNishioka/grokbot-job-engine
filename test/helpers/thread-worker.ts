@@ -15,7 +15,7 @@ Atomics.wait(barrier, 0, 0);
 try {
   const jobs = new JobStore(deps); const outbox = new OutboxStore(deps);
   const result = data.operation === 'create'
-    ? jobs.create({ source: 'imessage', source_message_id: 'concurrent-message', source_chat_id: 'chat-a', requester_id: 'requester', request_text: 'concurrent request' })
+    ? jobs.create({ source: 'imessage', source_message_id: 'concurrent-message', source_chat_id: 'chat-a', requester_id: 'self', request_text: 'concurrent request' })
     : data.operation === 'claim'
       ? jobs.claim({ worker_id: `worker-${data.index}`, lease_seconds: 10 }, data.jobId)
       : outbox.claim({ worker_id: `sender-${data.index}`, lease_seconds: 10, outbox_id: data.outboxId });

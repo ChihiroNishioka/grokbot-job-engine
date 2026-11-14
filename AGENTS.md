@@ -5,6 +5,7 @@
 ## 始める前に
 - 最初に `LESSONS.md` を読む。そこに書いてある失敗を繰り返さない。
 - 仕様は `docs/SPEC.md`、受け入れ条件は `docs/GREEN.md` を正とする。
+- 家族ジョブの権限は `/workspace/dev/genie-runs/family-policy-spec.md` を優先する。
 
 ## 品質ループ（短縮版）
 1. 仕様と GREEN when 一覧を確かめる。
@@ -21,6 +22,8 @@
 - トークン、API キー、パスワード、個人のメールアドレス、電話番号、住所、tailnet のホスト名や IP をコード、テスト、ログ、コミットに入れない。
 - `.env.example` にはダミー値だけを書く。本物の値は `.env`（Git 管理外）に置く。
 - ログに出す値は `src/logging` のマスキングを通す。
+- member ジョブは保存済み `allowed_capabilities` の範囲内だけを Routine / Worker で実行する。プロンプトの指示だけに頼らず、副作用の前に `require`（または同等の検査）を行い、claim と complete の Job Engine 検査も維持する。
+- 家族グループを有効化する前に、Routine が capability 制限を構造的に守ることをオーナーが確認する。
 
 ## 終わったら
 - 結果の要約を `.runs/<step>.md` に書く（何をしたか、テスト結果、残った問題）。`.runs/` は Git 管理外。

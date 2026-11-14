@@ -3,7 +3,7 @@ import type Database from 'better-sqlite3';
 function migrateV1(db: Database.Database): void {
   db.transaction(() => {
     const version = db.pragma('user_version', { simple: true });
-    if (version === 1 || version === 2) return;
+    if (version === 1 || version === 2 || version === 3) return;
     if (version !== 0) throw new Error('Unsupported database version');
     db.exec(`
 CREATE TABLE id_counters (name TEXT PRIMARY KEY, value INTEGER NOT NULL);
@@ -108,16 +108,17 @@ CREATE INDEX outbox_lease_idx  ON delivery_outbox(status, lease_expires_at);
 }
 
 
-export function migrate(db: Database.Database): void {
-  const version = db.pragma('user_version', { simple: true });
-  if (version === 2) return;
+function migrateV2(db: Database.Database): void {
+  const version = Number(db.pragma('user_version', { simple: true }));
+  if (version === 2 || version === 3) return;
   if (version !== 0 && version !== 1) throw new Error('Unsupported database version');
   if (version === 0) migrateV1(db);
   const foreignKeys = db.pragma('foreign_keys', { simple: true });
   db.pragma('foreign_keys=OFF');
   try {
     db.transaction(() => {
-      if (db.pragma('user_version', { simple: true }) === 2) return;
+      const current = db.pragma('user_version', { simple: true });
+      if (current === 2 || current === 3) return;
       const sequence = db.prepare<[], {seq:number}>("SELECT seq FROM sqlite_sequence WHERE name='delivery_outbox'").get()?.seq ?? 0;
       const eventsSequence = db.prepare<[], {seq:number}>("SELECT seq FROM sqlite_sequence WHERE name='job_events'").get()?.seq ?? 0;
       for (const table of ['delivery_outbox', 'job_events']) {
@@ -151,4 +152,65 @@ export function migrate(db: Database.Database): void {
   } finally {
     db.pragma(`foreign_keys=${foreignKeys === 1 ? 'ON' : 'OFF'}`);
   }
+}
+
+function migrateV3(db: Database.Database): void {
+  const version = db.pragma('user_version', { simple: true });
+  if (version === 3) return;
+  if (version !== 2) throw new Error('Unsupported database version');
+  db.transaction(() => {
+    const current = db.pragma('user_version', { simple: true });
+    if (current === 3) return;
+    if (current !== 2) throw new Error('Unsupported database version');
+    db.exec(`ALTER TABLE jobs ADD COLUMN sender_handle TEXT CHECK (sender_handle IS NULL OR length(sender_handle) BETWEEN 1 AND 256);
+      PRAGMA user_version=3;`);
+  }).immediate();
+}
+
+function migrateV4(db: Database.Database): void {
+  const version = db.pragma('user_version', { simple: true });
+  if (version === 4) return;
+  if (version !== 3) throw new Error('Unsupported database version');
+  const foreignKeys = db.pragma('foreign_keys', { simple: true });
+  db.pragma('foreign_keys=OFF');
+  try {
+    db.transaction(() => {
+      const current = db.pragma('user_version', { simple: true });
+      if (current === 4) return;
+      if (current !== 3) throw new Error('Unsupported database version');
+      const sequence = db.prepare<[], { seq: number }>("SELECT seq FROM sqlite_sequence WHERE name='delivery_outbox'").get()?.seq ?? 0;
+      const original = db.prepare<[], { sql: string }>("SELECT sql FROM sqlite_master WHERE type='table' AND name='delivery_outbox'").get();
+      if (!original) throw new Error('Missing migration table');
+      const indexes = db.prepare<[string], { sql: string }>("SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name=? AND sql IS NOT NULL").all('delivery_outbox');
+      const outboxV4 = original.sql
+        .replace(/CREATE TABLE "?delivery_outbox"?/, 'CREATE TABLE delivery_outbox_v4')
+        .replace("'cancelled','command'))", "'cancelled','command','notify'))");
+      if (!outboxV4.includes("'notify'")) throw new Error('Unsupported outbox schema');
+      db.exec(`ALTER TABLE jobs ADD COLUMN policy_decision TEXT CHECK (policy_decision IS NULL OR policy_decision IN ('allow','deny','hold','approved'));
+        ALTER TABLE jobs ADD COLUMN allowed_capabilities TEXT;
+        UPDATE jobs SET policy_decision='hold',allowed_capabilities='[]' WHERE status IN ('queued','claimed') AND requester_id='member';
+        ${outboxV4};
+        INSERT INTO delivery_outbox_v4 SELECT * FROM delivery_outbox;
+        DROP TABLE delivery_outbox;
+        ALTER TABLE delivery_outbox_v4 RENAME TO delivery_outbox;`);
+      for (const index of indexes) db.exec(index.sql);
+      db.prepare("UPDATE sqlite_sequence SET seq=max(seq,?) WHERE name='delivery_outbox'").run(sequence);
+      db.prepare("INSERT INTO sqlite_sequence(name,seq) SELECT 'delivery_outbox',? WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name='delivery_outbox')").run(sequence);
+      db.exec('PRAGMA user_version=4;');
+      const violations = db.pragma('foreign_key_check');
+      if (!Array.isArray(violations) || violations.length) throw new Error('Migration foreign key check failed');
+    }).immediate();
+  } finally {
+    db.pragma(`foreign_keys=${foreignKeys === 1 ? 'ON' : 'OFF'}`);
+  }
+}
+
+export function migrate(db: Database.Database): void {
+  const version = Number(db.pragma('user_version', { simple: true }));
+  if (version === 4) return;
+  if (version < 0 || version > 4) throw new Error('Unsupported database version');
+  if (version < 2) migrateV2(db);
+  const afterV2 = Number(db.pragma('user_version', { simple: true }));
+  if (afterV2 === 2) migrateV3(db);
+  migrateV4(db);
 }

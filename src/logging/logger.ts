@@ -1,7 +1,7 @@
 import { mask } from './mask.js';
 
 export interface Logger { info(value: unknown): void; error(value: unknown): void }
-const sensitive = new Set(['request_text', 'body', 'text', 'authorization', 'token', 'claim_token', 'password', 'secret', 'api_key', 'cookie']);
+const sensitive = new Set(['sender_handle', 'request_text', 'body', 'text', 'authorization', 'token', 'claim_token', 'password', 'secret', 'api_key', 'cookie']);
 
 function sanitize(value: unknown, seen: WeakSet<object>): unknown {
   if (typeof value === 'string') return mask(value);

@@ -238,7 +238,7 @@ CREATE INDEX outbox_lease_idx  ON delivery_outbox(status, lease_expires_at);
 | source | `'imessage'` | 必須 |
 | source_message_id | 1〜256 字 | 必須 |
 | source_chat_id | 1〜256 字。ALLOWED_SOURCE_CHAT_IDS に入っているもの | 必須 |
-| requester_id | 1〜256 字 | 必須 |
+| requester_id | `self` または `member` | 必須 |
 | job_type | `^[a-z][a-z0-9_.-]{0,63}$` | `general` |
 | request_text | 1〜REQUEST_TEXT_MAX_CHARS 字（コードポイントで数える） | request_text と payload_ref のどちらかは必須 |
 | payload_ref | 1〜512 字 | 同上 |
@@ -374,7 +374,7 @@ interface WakeDispatcher { wake(): Promise<WakeResult> }
 | 決定 | 反映 |
 |---|---|
 | 入口と出口は Grok Bot 組み込みの Messages 機能（Genie ではない） | Phase 0 の案（Genie と Notion の「返事」DB）は採らない。outbox は `channel='imessage'`、`target_chat_id`、`in_reply_to` だけを持ち、Notion に依存する列は持たない。source_chat_id と source_message_id の形式は確認できていないので、中身を解釈しない文字列（256 字以内）として扱う。**リスク**: Phase 0 の調査では、SendIMessage は送るたびに承認が要り、Routine から出た承認カードは 30 分で期限切れになる。このため、無人の完了通知は pending のまま残る可能性がある。そのときは Reconciler の staleOutbox で見えるようにする（Phase 2/3 で確認する） |
-| 自分宛てトークだけ受け付ける | ALLOWED_SOURCE_CHAT_IDS を必須にし、それ以外からの create は 403 にする。outbox の宛先はジョブから写し、入力では受け取らない |
+| 自分宛てトークだけ受け付ける（14章で置き換え） | ALLOWED_SOURCE_CHAT_IDS を必須にし、それ以外からの create は 403 にする。outbox の宛先はジョブから写し、入力では受け取らない |
 | box→Mac mini は Tailscale の中だけ | 既定は 127.0.0.1 で待ち受ける。Phase 0 の第二候補（Funnel に `/jobs` を足す）、Webhook の HMAC、リプレイ対策は作らない（Phase 1 には外から受ける webhook がないため） |
 
 ### 元の指示や参考実装との違い（Phase 1 の設計判断）
@@ -414,7 +414,7 @@ interface WakeDispatcher { wake(): Promise<WakeResult> }
 
 ## 13. 方針変更（オーナー、11/11 03:11）：入口と出口は Mac mini の Genie
 
-11 章の「入口と出口は Grok Bot 組み込みの Messages 機能」は取り消す。Routine の実行中には組み込みの Messages ツールが渡らないと分かったため。入口と出口は Mac mini の Genie（genie-in-messages）にする。受け付けるのは自分宛てのトークだけ。この章は 1〜12 章より優先する。
+11 章の「入口と出口は Grok Bot 組み込みの Messages 機能」は取り消す。Routine の実行中には組み込みの Messages ツールが渡らないと分かったため。入口と出口は Mac mini の Genie（genie-in-messages）にする。自分宛てのトークだけを受け付ける当時の方針は14章で置き換える。この章は 1〜12 章より優先する。
 
 ### 13.1 待ち受けを 2 つに分ける
 
@@ -427,22 +427,22 @@ interface WakeDispatcher { wake(): Promise<WakeResult> }
 - `GENIE_HOST` は `127.0.0.1`、`::1`、`localhost` のどれかだけを許す。ほかは起動しない。
 - `HOST` は Mac mini では tailnet 上の自分のアドレスを `.env` に書く（値はリポジトリに書かない）。`net.isIP()` で IP リテラルであることを求め、正規化後に未指定アドレス（`0.0.0.0`、`::` とその別表記、IPv4-mapped の `::ffff:0.0.0.0`）を拒否する。`0`、`0.0.0.00`、`localhost` を含むホスト名も起動しない。Funnel には出さない。
 - トークンは分ける。`GENIE_TOKEN`（32 字以上。Ingress だけに効く）と `JOB_API_TOKEN`（Job API だけに効く）。同じ値なら起動しない。
-- `GENIE_ALLOWED_CHAT_IDS`（必須、カンマ区切りの整数）。自分宛てトークの chat_id だけを書く。Ingress から作るジョブの source_chat_id はここに入っていなければならないので、`ALLOWED_SOURCE_CHAT_IDS` にも同じ値を入れる。
+- `GENIE_ALLOWED_CHAT_IDS`（必須、カンマ区切りの整数）。自分宛てトークと、14章で有効にした家族グループの chat_id を書く。`GENIE_GROUP_CHAT_IDS` の値も含める。Ingress から作るジョブの source_chat_id はここに入っていなければならないので、`ALLOWED_SOURCE_CHAT_IDS` にも同じ値を入れる。
 
 ### 13.2 `POST /ingress/genie`（Genie の webhook をそのまま受ける）
 
 - 認証: `Authorization: Bearer <GENIE_TOKEN>`。違えば 401。レート制限と本文サイズ上限は Job API と同じ。
 - 本文（Genie の `WebhookPayload` と同じ。strict）:
-  `{v:1, event:"message", idempotency_key:string, guid:string, chat_id:integer, text:string, created_at:string|null, sender_is_me:boolean, sender_name:string}`。`guid` と `idempotency_key` は 1〜256 字で同じ値。違えば 400。
+  `{v:1, event:"message", idempotency_key:string, guid:string, chat_id:integer, text:string, created_at:string|null, sender_is_me:boolean, sender_name:string, sender_handle?:string}`。`sender_handle` は14章の家族グループの依頼で任意に付く。`guid` と `idempotency_key` は 1〜256 字で同じ値。違えば 400。
 - 判定の順番（上で決まったら終わり）:
   1. chat_id が `GENIE_ALLOWED_CHAT_IDS` に無い → 403 CHAT_NOT_ALLOWED（Genie は 4xx を再送しない）。
-  2. `sender_is_me` が false → 200 `{status:"ignored", reason:"not_from_me"}`。
+  2. `sender_is_me` が false で、14章のグループ設定がないか `sender_handle` がない → 200 `{status:"ignored", reason:"not_from_me"}`。設定済みグループからハンドル付きで届いた依頼は14.2に従う。
   3. 本文の先頭の空白・不可視文字と、先頭の 🪔（U+1FA94、続く U+FE0F と空白）を取り除く。残りの先頭が 🧞‍♂️（U+1F9DE U+200D U+2642、U+FE0F は任意。性別なしの 🧞 も含む）なら → 200 `{status:"ignored", reason:"bot_reply"}`（返信ループの防止）。
   4. 残りが空 → 200 `{status:"ignored", reason:"empty"}`。
   5. 同じ guid を前に受けていれば（ジョブでもコマンドでも）→ 200 で前回と同じ応答。行も outbox も増えない。
   6. 本文が REQUEST_TEXT_MAX_CHARS を超える → 200 `{status:"rejected",reason:"too_long"}`。同じトランザクションで `cmd:<guid>` の返信「依頼が長すぎます（最大 N 字）。短くして送り直してください。」を作り guid で冪等にする。
   7. 前後を trim した残りが `/help`、`/status`、`/cancel`、`/retry` で始まる本文 → 管理コマンド（13.3）。末尾の空白・改行・全角スペースを許す。それ以外の `/` 始まりは通常のジョブ。
-  8. それ以外 → ジョブを作る（source=`imessage`、source_message_id=guid、source_chat_id=chat_id の 10 進文字列、requester_id=`self`、job_type=`general`、request_text=残りの本文）。同じトランザクションで受付の outbox（kind=`ack`、キー `job:<job_id>:ack`）を作る。応答は 201 `{status:"created", job_id}`。
+  8. それ以外 → ジョブを作る（source=`imessage`、source_message_id=guid、source_chat_id=chat_id の 10 進文字列、requester_id は自分なら `self`、14章の家族なら `member`、job_type=`general`、request_text=残りの本文）。家族のジョブには `sender_handle` を保存する。同じトランザクションで受付の outbox（kind=`ack`、キー `job:<job_id>:ack`）を作る。応答は 201 `{status:"created", job_id}`。
 - 受け付けた guid は `ingress_messages`（guid PRIMARY KEY、chat_id、kind（job / command / ignored）、job_id、outbox_id、received_at、created_at）に残す（受信時刻と受付時刻の記録）。本文は保存しない（ジョブの request_text を除く）。
 - 本文、sender_name はログに出さない。
 
@@ -522,3 +522,85 @@ Genie の `HTTPReplySource`（Sources/GenieCore/ReplySource.swift）の形に合
 - artifact_urls は API complete・CLI・runWorkerOnce で同じスキーマを使う。20件以内、各1200コードポイント以内、空白・制御文字なしの HTTPS URL。runWorkerOnce は process の返却後、complete 前に検証し、不正なら complete を送らず fail の INVALID_ARTIFACT にする。error.message に規則だけを残し、URL本文は残さない。結果は保存せず、失敗として明示する。fail 成功後は lease 失効でも再キューされない。CLI は不正入力を終了コード2、APIは400で拒否する。
 - 成功した Worker と CLI complete の戻り値に artifact_urls_omitted を付ける。通知本文の独立した行として完全な形で載らなかった URL の件数で、0なら省略する。独自notifyにも適用し、CLIの --no-notify は全件が未掲載となる。notify_truncated / notify_replaced / artifact_urls_omitted は成功時だけ付け、失敗・通信障害には付けない。
 - 変更前に保存された長大URLは自動変換しない。単独でも見出しと案内を含め1500に入らない既存URLがあれば、/status は表示上限と短いURLでの再登録が必要な旨を返し、URLを途中で切らない。
+
+## 14. 家族のグループからのジョブ
+
+この章は13章の「受け付けるのは自分宛てのトークだけ」を改める。通常の webhook 経路は変えない。`GENIE_GROUP_CHAT_IDS` の既定は無効で、空なら従来どおり家族の依頼を無視する。
+
+**`member` のジョブはオーナーの道具と権限で動く。** 家族グループの受付は既定で無効。権限判定、Job Engine 側の claim / complete 検査、オーナー承認、設定は14.5に従う。Routine が `allowed_capabilities` を構造的に守ることを確認するまで有効化しない。
+
+受付の返信には本文の先頭 40 字が入り、完了・失敗通知には `notify.body` の結果の要約や URL が入ることがある。どちらもグループのメンバー全員に見える。
+
+### 14.1 設定と形式
+
+`GENIE_GROUP_CHAT_IDS` はカンマ区切りの安全な整数。未設定、空文字、空白だけの要素は空として扱う。全要素が `GENIE_ALLOWED_CHAT_IDS` に必要で、違反時は `ConfigError` の fields を `['GENIE_GROUP_CHAT_IDS']` とし、値はメッセージに含めない。`GENIE_ALLOWED_CHAT_IDS` は引き続き `ALLOWED_SOURCE_CHAT_IDS` の部分集合。
+
+Ingress の strict スキーマだけに任意の `sender_handle` を足す。値は次のいずれかに一致する ASCII 文字列で、1〜256字。正規化や trim はしない。
+
+- 電話は `^tel:\+?[0-9]{1,20}$`。
+- メールは `` ^email:[a-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@[a-z0-9-]+(\.[a-z0-9-]+)+$ ``。
+
+`null`、数値、空文字、大文字のメール、空白、制御文字、未知のキーは400 `VALIDATION_ERROR`。`sender_is_me=true` と `sender_handle` の同時指定も400。エラー文は固定文で値を含めない。Job API の `POST /jobs` は引き続きこのキーを受け付けない。
+
+### 14.2 受付の順番と冪等性
+
+1. スキーマ検証を行う。形式違反は許可外 chat でも403より先に400。
+2. `GENIE_ALLOWED_CHAT_IDS` に無い chat_id は403。
+3. `sender_is_me=false` で、グループ設定に無いかハンドルが無ければ200 `ignored/not_from_me`。受信記録を残さない。
+4. 既存規則の `bot_reply` と `empty` を適用する。
+5. 同じ guid があれば既存の応答を200で返す。chat_id 違いだけ409。ハンドルや sender_is_me の違いで既存列を変更しない。再送からハンドルが消えた場合は手順3で無視する。
+6. 本文の文字数上限を適用する。家族にも `too_long` の返信を一度だけ作る。
+7. 家族の `/help`、`/status`、`/cancel`、`/retry` は200 `{status:"ignored",reason:"command_not_allowed"}`。返信、outbox、受信記録、ジョブへの操作は行わない。オーナーは従来どおり元トークから操作できる。
+8. ジョブ、ack、受信記録を同一トランザクションで作る。家族は requester_id=`member` と受信した sender_handle、自分は requester_id=`self` と NULL。
+
+### 14.3 保存、受け渡し、伏せ方
+
+DB v3 は jobs に nullable な `sender_handle TEXT CHECK (sender_handle IS NULL OR length(sender_handle) BETWEEN 1 AND 256)` を追加する。列追加と user_version=3 は1トランザクション。v0、v1、v2から繰り返し移行でき、既存行はNULL。v4 は14.5の権限列を追加する。v5以上の版は拒否する。ダウングレードは提供しない。
+
+認証済み Job API の get、claim、complete、fail、cancel、retry の job に文字列かnullを返す。list、events、Reconciler の報告には含めない。Worker の process は job.sender_handle を読める。旧サーバーの応答でキーが無ければnullにする。Outcome に値を加えない。Worker の扱いは [Worker の手順](worker.md#送信者ハンドルを扱う) に従う。
+
+ログは入れ子を含め sender_handle キーを伏せ、値を文やイベントに埋め込まない。`redactHandle(text, handle)` が保存値全体と接頭辞を除いた部分を大小文字を区別せず `[REDACTED]` にする。対象は受付ack、complete/failのnotify.body、POST /outboxのbody、保存前のfail error.message、/statusの全文、cancel/retryの返信。ハンドルがnullなら文を変えない。error.messageは従来のmaskの後にこの処理を通す。
+
+通知には新しく mask() をかけない。成果物URLの無関係な長いパスとクエリはそのまま残す。ハンドルがURL内にあれば一致部分だけ伏せる。`/status` に依頼者の表示欄は追加しない。書式違いの電話番号、例えば `+1 555 010 0000` のような区切り入りの表記は一致対象外。
+
+### 14.4 デプロイの順番と停止
+
+Job Engine を先に更新する。新Genieを旧Job Engineに接続すると、家族のsender_handle付き要求が400になり再送されずdeadletterになる。
+
+1. DBをバックアップする。v4を旧版では開けない。
+2. Job Engineを更新し、GENIE_GROUP_CHAT_IDSは空で起動する。
+3. Genieを更新する。
+4. Routine が capability 制限を構造的に守ることを確認し、Job EngineのALLOWED_SOURCE_CHAT_IDS、GENIE_ALLOWED_CHAT_IDS、GENIE_GROUP_CHAT_IDS、OWNER_NOTIFY_CHAT_IDを設定して再起動する。
+5. Genieのgroup_chat_guidsとjob_chat_idsに対象グループを設定する。job_chat_idsを先に足すと403で自分の依頼も失われうる。
+
+Genieのjob_chat_idsから外すと新しいメッセージは通常webhookへ戻る。再試行中のメッセージは初回に決めた経路のまま。家族の新しい受付を止めるにはGENIE_GROUP_CHAT_IDSを空にして再起動する。作成済みのジョブはオーナーが元トークまたはOWNER_NOTIFY_CHAT_IDから/cancelする。旧版へ戻すにはバックアップを使う。v4移行後の新しいジョブはバックアップに含まれない。
+
+マスクで文字数が増える場合も、通知は置換後に既存の1500コードポイント制限を適用する。独自notify.bodyは従来と同じく途中で切られる場合がある。`/status` はマスクした表示用URLでページを構成し、単独でも収まらないURLは途中で切らず表示上限と再登録の案内を返す。保存済みのartifact_urlsは変更しない。
+
+### 14.5 家族ジョブの権限ポリシー
+
+この節は家族ジョブについて「Job Engine は送信者ごとの権限管理を行わない」という説明を置き換える。対象は設定済みグループの `requester_id='member'` かつ sender_handle があるジョブ。`self` は従来どおり制限しない。
+
+判定は `src/policy/family-policy.ts` の決定的な関数で行う。DENY を先に判定し、次に明確な ALLOW を判定し、それ以外は HOLD とする。依頼文やハンドルを理由コード・イベント・ログへ入れない。
+
+| Capability | 自動許可 | 意味 |
+|---|---|---|
+| `lookup` | はい | 調べものと質問への回答 |
+| `family_calendar_read` | はい | 家族カレンダーの参照 |
+| `family_calendar_add` | はい | 家族カレンダーへの追加。削除や移動は含めない |
+| `family_notes_append` | はい | 共有家族メモやリストへの追記 |
+| `notify_owner` | はい | オーナーへの通知 |
+| `booking` | いいえ | HOLD 時の提案 capability。承認後にだけ使える |
+| `owner_mail`, `owner_line`, `owner_personal_event_write`, `purchase`, `message_others`, `dev_settings`, `vault` | いいえ | 禁止 capability。分類結果や承認で付与しない |
+
+DENY capability や要求があれば、ALLOW と混ざっていても DENY とする。DENY は `status='cancelled'`、固定 reason code、短い断り返信を作る。`/retry` は許さない。HOLD は `status='queued'` のまま `policy_decision='hold'` とし、claim できない。グループには承認待ちの ack、`OWNER_NOTIFY_CHAT_ID` にはジョブID、依頼先頭40字、承認後に許可する capability、`/approve` と `/cancel` の案内を通知する。
+
+DB v4 は `jobs.policy_decision`（NULL または `allow` / `deny` / `hold` / `approved`）と `jobs.allowed_capabilities`（JSON 配列または NULL）を追加する。列追加と user_version 更新は1トランザクション。status の CHECK は変更しない。v0〜v3 を移行し、既存の queued または claimed member は `hold` と空配列にする。self と終端行は NULL のままでよい。outbox の `kind` CHECK に `notify` を加えるため `delivery_outbox` だけを再作成し、行・参照・index・sequenceを保持する。jobs は再作成しない。v5 以上は拒否し、ダウングレードは提供しない。
+
+claim と complete は `self` かつ policy が NULL、または `member` かつ policy が `allow` / `approved` のジョブだけを受け付ける。Dispatcher と Reconciler も hold を起動・再キュー対象にしない。member の complete は `used_capabilities` を必須とし、保存済み許可 capability の部分集合でなければ 400 `POLICY_DENIED` とする。`self` はこの検査を受けない。
+
+get / claim / complete / fail / cancel / retry は job に `policy_decision` と配列または null の `allowed_capabilities` を含める。list、events、Reconciler の報告には含めない。Worker は旧サーバー応答の欠落フィールドを null / 空として扱う。Routine は `allowed_capabilities` 外の操作を実行せず、完了時に実際に使った capability を `used_capabilities` として返す。
+
+`OWNER_NOTIFY_CHAT_ID` は空が既定で、グループ受付を有効にする場合は必須。安全な整数で `GENIE_ALLOWED_CHAT_IDS` に含まれ、`GENIE_GROUP_CHAT_IDS` には含めない。違反は値を含まない `ConfigError` とする。オーナー通知は `kind='notify'`、`channel='genie'`、`job:<id>:owner_notify` のキーで、個人通知先にだけ送る。ハンドルは伏せる。
+
+オーナーは元の source chat または `OWNER_NOTIFY_CHAT_ID` から `/approve`（別名 `/許可`）、`/cancel`、`/status`、`/retry`、`/help` を使える。`/approve` は hold のみを `policy_decision='approved'` に CAS 更新して claim 可能にする。同じ要求の再送は冪等。承認結果の返信先は `/approve` を送ったトークにする。元トーク以外では `OWNER_NOTIFY_CHAT_ID` だけでジョブの状態を確認できる。ほかのトークにはジョブの存在を漏らさない。家族の管理コマンドは従来どおり無視する。

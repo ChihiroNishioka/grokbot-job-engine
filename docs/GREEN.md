@@ -152,7 +152,7 @@
 | G62 | Ingress アプリに `/jobs` は 404、Job API アプリに `/ingress/genie` と `/genie/replies` は 404。Ingress は JOB_API_TOKEN では 401、Job API は GENIE_TOKEN では 401 | — | `test/ingress/apps.test.ts` |
 | G63 | 正しい Genie の payload（先頭 🪔）で 201 `{status:"created", job_id}`、ジョブが queued、request_text から 🪔 が除かれ、ack の outbox が 1 行（channel genie、キー `job:<id>:ack`、文面は 13.4 の受付）、ingress_messages に received_at が残る | 1, 2, 3（モック） | `test/ingress/genie.test.ts` |
 | G64 | 同じ guid を 3 回送る（Promise.all を含む）と、ジョブ・ack・ingress_messages はどれも 1 行で、2 回目以降は同じ job_id を返す | **8** | `test/ingress/genie.test.ts` |
-| G65 | 許可外の chat_id は 403 で行が増えない。sender_is_me=false は ignored で行が増えない（ingress_messages の ignored は可） | 13 | `test/ingress/genie.test.ts` |
+| G65 | 許可外の chat_id は 403 で行が増えない。`GENIE_GROUP_CHAT_IDS` が空か `sender_handle` が無いとき、sender_is_me=false は ignored で行が増えない（ingress_messages の ignored は可）。設定済みグループのハンドル付き依頼は member として受け付ける | 13, 14 | `test/ingress/genie.test.ts` |
 | G66 | 本文が `🧞‍♂️ 完了しました`、`🪔 🧞‍♂️ …`、`🧞 …`、先頭に空白のある `  🧞‍♂️…` は ignored（bot_reply）でジョブも outbox も作らない。空や 🪔 だけは ignored（empty） | **14** | `test/ingress/loop.test.ts` |
 | G67 | `/status`、`/cancel`、`/retry`、`/help` がそれぞれ 13.3 どおりに動き、command の outbox（キー `cmd:<guid>`）が 1 行できる。同じ guid の再送で再実行されない。status/cancel/retry は別の chat と存在しないジョブに同じ「ジョブが見つかりません。」を返し、存在を漏らさない | 7, **15** | `test/ingress/commands.test.ts` |
 | G68 | `GET /genie/replies`（cursor なし）が pending の genie 行を昇順で、13.5 の形（id `je-<n>`、chat_id 数値、in_reply_to_guid、created_at）で返し、cursor が最後の `o:<n>`。同じ cursor で取り直すと同じ内容。page の上限を超える分は次のページ | 2, 6（モック） | `test/ingress/replies.test.ts` |
@@ -199,3 +199,54 @@
 | G93 | API completeとCLIはHTTPS・各1200コードポイント以内・20件以内・空白と制御文字不可の共有規則。境界1200を受理、1201を拒否 | test/worker/urlstatus.test.ts の G93 |
 | G94 | processの不正URLはcomplete前にfail INVALID_ARTIFACT、理由だけ保存。原因は「処理結果の成果物 URL が規則に合いませんでした」。試行残数によらず/retryを案内せず、処理側の修正が必要な理由を伝える。WorkerとCLI failのnotify:{}によるサーバー既定文で同じ規則。completeを呼ばず、lease切れと次回実行でも再処理しない | test/worker/urlstatus.test.ts の G94 |
 | G95 | Worker/CLI成功時は未掲載URL件数を返す。独自notifyとno-notifyにも適用。失敗時はnotify_*と省略件数を付けない | test/worker/urlstatus.test.ts の G95 |
+
+## 送信者ハンドルと家族グループ
+
+補足仕様を含む契約。電話のダミーは実行時に組み立て、メールはfamily@example.comだけを使う。
+
+| ID | 条件 | 置き場所 |
+|---|---|---|
+| JE-SH1 | グループ設定は既定で空。カンマの空要素を除く。安全な整数かつGENIE_ALLOWED_CHAT_IDSの部分集合だけを許可し、違反は値を含まないConfigError | `test/config.test.ts` |
+| JE-SH2 | グループ設定なしでは家族をnot_from_meで無視し保存しない | `test/ingress/sender-handle.test.ts` |
+| JE-SH3 | 設定グループの電話・メールをmemberジョブとackに一度だけ保存 | `test/ingress/sender-handle.test.ts` |
+| JE-SH4 | 非グループ、許可外、ハンドルなしの判定と保存件数 | `test/ingress/sender-handle.test.ts` |
+| JE-SH5 | 形式の共有表、長さ境界、ASCII、制御文字、未知型。拒否の値が応答とログにない | `test/ingress/sender-handle.test.ts` |
+| JE-SH6 | 自分のハンドル付きは400、キーなしはselfかつNULL | `test/ingress/sender-handle.test.ts` |
+| JE-SH7 | Ingressの未知キーとJob API createのsender_handleはstrictのまま400 | `test/ingress/sender-handle.test.ts`, `test/sender-handle-store.test.ts` |
+| JE-SH8 | 家族の管理コマンドは無返信でcommand_not_allowed。全ジョブ列と受信記録を変えず、オーナーはqueued取消とclaimedの取消要求が可能 | `test/ingress/sender-handle.test.ts` |
+| JE-SH9 | 家族の上限超過はtoo_long返信を一度だけ作る | `test/ingress/sender-handle.test.ts` |
+| JE-SH10 | 家族のbot_replyとemptyは保存しない | `test/ingress/sender-handle.test.ts` |
+| JE-SH11 | ハンドル変更と並行再送、自分のキーなし再送でも最初のジョブを保持。家族のキーなしは無視 | `test/ingress/sender-handle.test.ts` |
+| JE-SH12 | v0/v1/v2からv3、再open、NULL、sequence保持、長さCHECK。JE-FP3ではこの版からv4へ移行 | `test/migration-genie.test.ts` |
+
+## 家族ジョブの権限ポリシー
+
+| ID | 条件 | 置き場所 |
+|---|---|---|
+| JE-FP1 | `OWNER_NOTIFY_CHAT_ID` は空が既定。家族グループ有効時は安全な整数かつ `GENIE_ALLOWED_CHAT_IDS` に含まれ、グループには含まれない。違反は値を含まない `ConfigError` で、fields は `OWNER_NOTIFY_CHAT_ID` | `test/config.test.ts` |
+| JE-FP2 | 純粋な決定的分類が仕様の ALLOW、DENY、HOLD 例を分類する。DENY は ALLOW より優先し、HOLD は自動実行 capability を付けない。理由コードとグループ返信に依頼本文やハンドルを含めない | `test/policy/family-policy.test.ts` |
+| JE-FP3 | v0〜v3 は v4 に移行し、非終端 member（queued と claimed）を hold と空配列にする。self と終端行は NULL のまま。jobs の status CHECK と行、外部キー、sequence を保ち、outbox の `notify` kind を許可する。再実行可能で v5 以上を拒否する | `test/migration-genie.test.ts` |
+| JE-FP4 | get と個別 job 操作は policy fields を返す。list、events、Reconciler 報告は返さない。self/NULL と member/allow または approved だけを claim し、member の NULL policy は claim / complete できない。hold と deny は取得しない。Dispatcher と staleQueued は hold を実行可能な滞留として扱わない | `test/api.test.ts`, `test/core.test.ts`, `test/policy/family-policy-store.test.ts` |
+| JE-FP5 | member の complete は `used_capabilities` を要求し、保存済み許可の部分集合だけを受け付ける。拒否は job、run、event を変えない。self は省略でき、指定値も検査しない | `test/api.test.ts` |
+| JE-FP6 | Worker は policy fields を配列または null として読む。古いサーバーでキーがなくても claim を読める。`process({job})` の成功 capability を complete に送る。Strict schema は未知の create / complete キーを拒否する | `test/worker/family-policy.test.ts`, `test/api.test.ts` |
+| JE-FP7 | Genie の allow は従来の ack、deny は cancelled と短いお断りだけで ack を作らず同じ guid を再送しても同じ拒否応答、hold は queued のまま承認待ち ack とオーナー通知を作る。通知本文はオーナー chat だけを宛先にし、ハンドルを伏せる | `test/ingress/family-policy.test.ts` |
+| JE-FP8 | オーナーは `/approve` と `/許可` を hold にだけ使える。成功は approved に CAS し、再送に冪等。承認前は claim できず、承認後は claim できる。deny は retry できない | `test/ingress/family-policy.test.ts` |
+| JE-FP9 | オーナー通知 chat は元 chat と同じ秘匿規則で `/approve`、`/cancel`、`/status`、`/retry`、`/help` を処理する。家族の管理コマンドは無視し、他 chat に job の存在を漏らさない | `test/ingress/family-policy.test.ts` |
+| JE-FP10 | SPEC 14.5、AGENTS、worker、genie、status、.env.example、GREEN は構造的な権限検査、v4、承認手順、有効化前の Routine 確認を記載する | `test/docs.test.ts`, `test/hygiene.test.ts` |
+
+## 送信者ハンドルの取得と表示
+
+| ID | 条件 | 置き場所 |
+|---|---|---|
+| JE-SH13 | get/claim/complete/fail/cancel/retryはsender_handleを返し、list/eventsは返さない | `test/sender-handle-store.test.ts` |
+| JE-SH14 | Worker processに文字列かnullを渡す。旧応答の欠落はnull。Outcomeに値がない | `test/worker/sender-handle.test.ts` |
+| JE-SH15 | /statusの文面は依頼者表示を追加せず、ハンドルを含まない | `test/ingress/sender-handle.test.ts` |
+| JE-SH15b | 本文中のメールはackと/genie/repliesで伏せる | `test/ingress/sender-handle.test.ts` |
+| JE-SH15c | URL内の一致値を通知と/statusで伏せ、無関係な長いパスとクエリを保つ。ハンドルなしの文は変わらない | `test/ingress/sender-handle.test.ts`, `test/sender-handle-store.test.ts` |
+| JE-SH16 | 全ライフサイクルのログと入れ子のsender_handleを伏せる | `test/sender-handle-store.test.ts` |
+| JE-SH17 | complete/fail/POST outboxとerror.messageで全体と接頭辞なしを大小文字を区別せず伏せ、URLを保つ | `test/sender-handle-store.test.ts` |
+| JE-SH18 | 400/409/500の固定エラー応答とログに値がない | `test/ingress/sender-handle.test.ts`, `test/sender-handle-store.test.ts` |
+| JE-SH19 | lease切れのreconcile報告/eventsに値がなく、従来のGenie通知を保つ | `test/sender-handle-store.test.ts` |
+| JE-SH20 | 契約、設定、v3移行、デプロイ順、Workerの扱い、実機未確認を文書化し、全テストの置き場所が存在 | `test/docs.test.ts` |
+| JE-SH21 | 秘密検査とhygieneで電話の連続数字や個人情報を検出しない | `test/secrets.test.ts`, `test/hygiene.test.ts` |
+| JE-SH22 | SPECとWorkerに既定は無効とmemberのオーナー権限・有効化の前提を明記 | `test/docs.test.ts` |
