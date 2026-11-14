@@ -3,12 +3,13 @@ import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createAdaptorServer, type ServerType } from '@hono/node-server';
 import { ConfigError, loadConfig } from './config/index.js';
-import { openDb } from './db/open.js';
+import { openDb, openReadonlyDb } from './db/open.js';
 import { createIngressApp } from './ingress/app.js';
 import { createApp } from './api/app.js';
 import { systemClock } from './lib/clock.js';
 import { createLogger, type Logger } from './logging/logger.js';
 import { reconcile } from './reconciler/index.js';
+import { createDashboardApp } from './dashboard/app.js';
 
 interface StartupOptions {
   env?: NodeJS.ProcessEnv;
@@ -25,6 +26,7 @@ export function startMain({
 }: StartupOptions = {}): () => void {
   const servers: ServerType[] = [];
   let db: ReturnType<typeof openDb> | undefined;
+  let readDb: ReturnType<typeof openReadonlyDb> | undefined;
   let timer: ReturnType<typeof setInterval> | undefined;
   let stopped = false;
   const shutdown = () => {
@@ -34,12 +36,16 @@ export function startMain({
     process.removeListener('SIGINT', shutdown);
     process.removeListener('SIGTERM', shutdown);
     let pending = servers.length;
-    if (pending === 0) db?.close();
+    if (pending === 0) closeDatabases();
     for (const server of servers) {
-      server.close(() => { if (--pending === 0) db?.close(); });
+      server.close(() => { if (--pending === 0) closeDatabases(); });
     }
   };
-  const listenFailed = (listener: 'job_api' | 'genie', error: unknown) => {
+  const closeDatabases = () => {
+    if (readDb?.open) readDb.close();
+    if (db?.open) db.close();
+  };
+  const listenFailed = (listener: 'job_api' | 'genie' | 'dashboard', error: unknown) => {
     if (stopped) return;
     const code = error !== null && typeof error === 'object' && 'code' in error &&
       (error.code === 'EADDRINUSE' || error.code === 'EADDRNOTAVAIL' || error.code === 'EACCES' || error.code === 'EPERM')
@@ -52,11 +58,13 @@ export function startMain({
     const config = loadConfig(env);
     if (config.DATABASE_PATH !== ':memory:') mkdirSync(dirname(config.DATABASE_PATH), { recursive: true });
     db = openDb(config.DATABASE_PATH);
+    readDb = openReadonlyDb(config.DATABASE_PATH);
     const deps = { db, clock: systemClock, config, logger };
     const listeners = [
       { name: 'job_api', fetch: createApp(deps).fetch, host: config.HOST, port: config.PORT },
       { name: 'genie', fetch: createIngressApp(deps).fetch, host: config.GENIE_HOST, port: config.GENIE_PORT },
-    ] satisfies { name: 'job_api' | 'genie'; fetch: Parameters<typeof createAdaptorServer>[0]['fetch']; host: string; port: number }[];
+      { name: 'dashboard', fetch: createDashboardApp({ ...deps, readDb }).fetch, host: config.DASHBOARD_HOST, port: config.DASHBOARD_PORT },
+    ] satisfies { name: 'job_api' | 'genie' | 'dashboard'; fetch: Parameters<typeof createAdaptorServer>[0]['fetch']; host: string; port: number }[];
     for (const listener of listeners) {
       const server = createAdaptorServer({ fetch: listener.fetch });
       server.on('error', error => listenFailed(listener.name, error));

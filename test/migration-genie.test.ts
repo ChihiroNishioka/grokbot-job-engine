@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { expect, test } from 'vitest';
 import { migrate } from '../src/db/migrations.js';
 
-test('JE-FP3 migration v1 to v4 preserves rows, references, sequence and supports owner notifications twice', () => {
+test('JE-FP3 migration v1 to v5 preserves rows, references, sequence and supports owner notifications twice', () => {
   const db = new Database(':memory:');
   try {
     db.pragma('foreign_keys=ON');
@@ -19,7 +19,7 @@ test('JE-FP3 migration v1 to v4 preserves rows, references, sequence and support
     const before = ['jobs', 'delivery_outbox', 'job_events'].map(table => db.prepare(`SELECT * FROM ${table}`).all());
     migrate(db);
     migrate(db);
-    expect(db.pragma('user_version', { simple: true })).toBe(4);
+    expect(db.pragma('user_version', { simple: true })).toBe(5);
     expect(['jobs', 'delivery_outbox', 'job_events'].map(table => db.prepare(`SELECT * FROM ${table}`).all())).toMatchObject(before);
     expect(db.prepare('SELECT sender_handle FROM jobs').all()).toEqual([{ sender_handle: null }]);
     const inserted = db.prepare(`INSERT INTO delivery_outbox(job_id,idempotency_key,kind,channel,target_chat_id,body,status,created_at,updated_at)
@@ -31,7 +31,7 @@ test('JE-FP3 migration v1 to v4 preserves rows, references, sequence and support
   } finally { db.close(); }
 });
 
-test.each([0, 1, 2, 3])('JE-FP3 openDb migrates v%s to v4 and reopening preserves rows and sequences', async version => {
+test.each([0, 1, 2, 3, 4])('JE-FP3 openDb migrates v%s to v5 and reopening preserves rows and sequences', async version => {
   const { fileDb } = await import('./helpers/context.js');
   const { openDb } = await import('../src/db/open.js');
   const fixture = fileDb();
@@ -48,7 +48,7 @@ test.each([0, 1, 2, 3])('JE-FP3 openDb migrates v%s to v4 and reopening preserve
           job_id TEXT REFERENCES jobs(job_id), outbox_id INTEGER REFERENCES delivery_outbox(outbox_id),
           received_at INTEGER NOT NULL, created_at INTEGER NOT NULL, command TEXT);
           CREATE INDEX ingress_job_idx ON ingress_messages(job_id,kind); PRAGMA user_version=2;`);
-      if (version === 3) sql += "ALTER TABLE jobs ADD COLUMN sender_handle TEXT CHECK (sender_handle IS NULL OR length(sender_handle) BETWEEN 1 AND 256); PRAGMA user_version=3;";
+      if (version >= 3) sql += `ALTER TABLE jobs ADD COLUMN sender_handle TEXT CHECK (sender_handle IS NULL OR length(sender_handle) BETWEEN 1 AND 256); PRAGMA user_version=${version};`;
       db.exec(sql);
       db.exec(`INSERT INTO jobs(job_id,source,source_message_id,source_chat_id,requester_id,job_type,request_text,status,created_at,updated_at,max_attempts)
         VALUES ('J-000001','imessage','old-guid','21','self','general','old request','queued',1,1,3);
@@ -61,7 +61,7 @@ test.each([0, 1, 2, 3])('JE-FP3 openDb migrates v%s to v4 and reopening preserve
     const sequences = version === 0 ? [] : db.prepare('SELECT * FROM sqlite_sequence ORDER BY name').all();
     db.close();
     db = openDb(fixture.path);
-    expect(db.pragma('user_version', { simple: true })).toBe(4);
+    expect(db.pragma('user_version', { simple: true })).toBe(5);
     expect(db.pragma('table_info(jobs)')).toContainEqual(expect.objectContaining({ name: 'sender_handle', type: 'TEXT', notnull: 0 }));
     if (version !== 0) {
       expect(db.prepare('SELECT sender_handle FROM jobs').all()).toEqual([{ sender_handle: null }]);
@@ -70,7 +70,7 @@ test.each([0, 1, 2, 3])('JE-FP3 openDb migrates v%s to v4 and reopening preserve
     const before = db.prepare('SELECT * FROM jobs').all();
     for (let reopening = 0; reopening < 2; reopening++) {
       db.close(); db = openDb(fixture.path);
-      expect(db.pragma('user_version', { simple: true })).toBe(4);
+      expect(db.pragma('user_version', { simple: true })).toBe(5);
       expect(db.prepare('SELECT * FROM jobs').all()).toEqual(before);
       if (version !== 0) expect(db.prepare('SELECT * FROM sqlite_sequence ORDER BY name').all()).toEqual(sequences);
     }
@@ -80,9 +80,9 @@ test.each([0, 1, 2, 3])('JE-FP3 openDb migrates v%s to v4 and reopening preserve
   } finally { if (db.open) db.close(); fixture.cleanup(); }
 });
 
-test('JE-FP3 refuses future v5 database', () => {
+test('JE-FP3 refuses future v6 database', () => {
   const db = new Database(':memory:');
-  try { db.pragma('user_version=5'); expect(() => migrate(db)).toThrow('Unsupported database version'); }
+  try { db.pragma('user_version=6'); expect(() => migrate(db)).toThrow('Unsupported database version'); }
   finally { db.close(); }
 });
 
@@ -103,7 +103,7 @@ test('JE-FP3 holds every nonterminal member job and leaves terminal and self pol
     db.pragma('foreign_keys=ON');
     migrate(db);
     migrate(db);
-    expect(db.pragma('user_version', { simple: true })).toBe(4);
+    expect(db.pragma('user_version', { simple: true })).toBe(5);
     expect(db.prepare('SELECT job_id,status,policy_decision,allowed_capabilities FROM jobs ORDER BY job_id').all()).toEqual([
       { job_id: 'J-000001', status: 'queued', policy_decision: 'hold', allowed_capabilities: '[]' },
       { job_id: 'J-000002', status: 'claimed', policy_decision: 'hold', allowed_capabilities: '[]' },

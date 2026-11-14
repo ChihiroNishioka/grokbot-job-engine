@@ -21,7 +21,7 @@ const disposers: (() => void)[] = [];
 afterEach(() => { for (const dispose of disposers.splice(0).reverse()) dispose(); });
 function fixture(filename = ':memory:', env: Record<string, string> = {}) {
   const clock = new FakeClock();
-  const config = loadConfig({ JOB_API_TOKEN: 'dummy-'.repeat(8), ALLOWED_SOURCE_CHAT_IDS: 'chat-a,21', GENIE_TOKEN: 'dummy-genie-'.repeat(4), GENIE_ALLOWED_CHAT_IDS: '21', ...env });
+  const config = loadConfig({ JOB_API_TOKEN: 'dummy-'.repeat(8), ALLOWED_SOURCE_CHAT_IDS: 'chat-a,21', GENIE_TOKEN: 'dummy-genie-'.repeat(4), DASHBOARD_TOKEN: 'dummy-dashboard-token-'.repeat(2), DASHBOARD_ALIAS_KEY: 'dummy-dashboard-alias-key-'.repeat(2), DASHBOARD_ALIASES: '{}', GENIE_ALLOWED_CHAT_IDS: '21', ...env });
   const db = openDb(filename);
   disposers.push(() => { if (db.open) db.close(); });
   const lines: string[] = [];

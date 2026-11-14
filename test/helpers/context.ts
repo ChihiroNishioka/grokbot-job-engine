@@ -14,7 +14,7 @@ export class FakeClock {
   advance(ms: number) { this.time += ms; }
 }
 export const token = 'dummy-test-token-'.repeat(3);
-export const validEnv = { JOB_API_TOKEN: token, RATE_LIMIT_PER_MINUTE: '10000', GENIE_TOKEN: 'dummy-genie-token-'.repeat(3), GENIE_ALLOWED_CHAT_IDS: '21', OWNER_NOTIFY_CHAT_ID: '21', ALLOWED_SOURCE_CHAT_IDS: 'chat-a,chat-b,21' };
+export const validEnv = { JOB_API_TOKEN: token, RATE_LIMIT_PER_MINUTE: '10000', GENIE_TOKEN: 'dummy-genie-token-'.repeat(3), DASHBOARD_TOKEN: 'dummy-dashboard-token-'.repeat(2), DASHBOARD_ALIAS_KEY: 'dummy-dashboard-alias-key-'.repeat(2), DASHBOARD_ALIASES: '{}', GENIE_ALLOWED_CHAT_IDS: '21', OWNER_NOTIFY_CHAT_ID: '21', ALLOWED_SOURCE_CHAT_IDS: 'chat-a,chat-b,21' };
 export function input(): CreateInput;
 export function input(overrides: Partial<CreateInput>): CreateInput;
 export function input(overrides: Record<string, unknown>): Record<string, unknown>;
