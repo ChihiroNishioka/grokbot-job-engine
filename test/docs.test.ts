@@ -49,7 +49,38 @@ test('JE-SH20 sender handle contract and deployment are documented', () => {
 
 test.each(['docs/SPEC.md', 'docs/worker.md'])('JE-SH22/A1 member authority prerequisite and disabled default in %s', path => {
   const text = readFileSync(path, 'utf8');
-  for (const term of ['既定は無効', 'member', 'オーナーの道具と権限で動く', 'GENIE_GROUP_CHAT_IDS', 'Routine 側で member に許す操作を決めること']) expect(text, term).toContain(term);
+  for (const term of ['既定は無効', 'member', 'オーナーの道具と権限で動', 'GENIE_GROUP_CHAT_IDS', '構造的に守']) expect(text, term).toContain(term);
+});
+
+test('JE-FP10 family policy, migration, approval, and Routine guardrails are documented', () => {
+  const spec = readFileSync('docs/SPEC.md', 'utf8');
+  for (const term of ['### 14.5', 'allowed_capabilities', 'used_capabilities', 'DENY', 'HOLD', 'policy_decision', 'OWNER_NOTIFY_CHAT_ID', 'v0〜v3', 'queued または claimed member', 'Routine が `allowed_capabilities` を構造的に守る']) expect(spec, term).toContain(term);
+  expect(spec).toContain("status='queued'");
+  expect(spec).toContain('status の CHECK は変更しない');
+  const agents = readFileSync('AGENTS.md', 'utf8');
+  for (const term of ['family-policy-spec.md', 'allowed_capabilities', 'claim と complete', '構造的に守る']) expect(agents, term).toContain(term);
+  const worker = readFileSync('docs/worker.md', 'utf8');
+  for (const term of ['allowed_capabilities', 'used_capabilities', 'lookup', 'booking', '決定的な関数', 'OWNER_NOTIFY_CHAT_ID']) expect(worker, term).toContain(term);
+  const genie = readFileSync('docs/genie.md', 'utf8');
+  for (const term of ['OWNER_NOTIFY_CHAT_ID', 'v4移行', '/approve', '/許可', 'claim を止めたまま', 'used_capabilities']) expect(genie, term).toContain(term);
+  const status = readFileSync('docs/status.md', 'utf8');
+  for (const term of ['v4移行', 'allowed_capabilities', 'Routine の実装はこのリポジトリ外']) expect(status, term).toContain(term);
+  expect(readFileSync('.env.example', 'utf8')).toMatch(/^OWNER_NOTIFY_CHAT_ID=$/m);
+  const green = readFileSync('docs/GREEN.md', 'utf8');
+  for (let i = 1; i <= 10; i++) expect(green, `JE-FP${i}`).toContain(`JE-FP${i}`);
+});
+
+test('JE-SH13 through JE-SH15 are in an independent sender handle section', () => {
+  const green = readFileSync('docs/GREEN.md', 'utf8');
+  const familyPolicyStart = green.indexOf('## 家族ジョブの権限ポリシー');
+  const senderHandleStart = green.indexOf('## 送信者ハンドルの取得と表示');
+  expect(senderHandleStart).toBeGreaterThan(familyPolicyStart);
+
+  const familyPolicy = green.slice(familyPolicyStart, senderHandleStart);
+  for (let i = 13; i <= 15; i++) expect(familyPolicy, `JE-SH${i}`).not.toContain(`JE-SH${i}`);
+
+  const senderHandleSection = green.slice(senderHandleStart);
+  for (let i = 13; i <= 15; i++) expect(senderHandleSection, `JE-SH${i}`).toContain(`JE-SH${i}`);
 });
 
 test('review fixes keep the family group exception and shared reply visibility clear', () => {

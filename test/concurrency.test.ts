@@ -35,14 +35,14 @@ test('G09 G50 four threads create the same source message exactly once', async (
 
 test('G20 G50 four threads claim one job with one winning CAS and one run', async () => {
   const tmp = fileDb(); disposers.push(tmp.cleanup); const f = context({ path: tmp.path }); disposers.push(f.close); const jobs = new JobStore(f);
-  const job = jobs.create({ source: 'imessage', source_message_id: 'claim-race', source_chat_id: 'chat-a', requester_id: 'requester', request_text: 'claim race' }).job;
+  const job = jobs.create({ source: 'imessage', source_message_id: 'claim-race', source_chat_id: 'chat-a', requester_id: 'self', request_text: 'claim race' }).job;
   const results = await race(tmp.path, 'claim', { jobId: job.job_id }); expect(results.filter(r => r.result?.job)).toHaveLength(1); expect(results.filter(r => r.error === 'JOB_NOT_CLAIMABLE')).toHaveLength(3);
   expect(f.db.prepare('SELECT * FROM job_runs').all()).toHaveLength(1); expect(jobs.get(job.job_id).attempts).toBe(1);
 }, 20000);
 
 test('G39 G50 four threads claim one outbox with one sending winner', async () => {
   const tmp = fileDb(); disposers.push(tmp.cleanup); const f = context({ path: tmp.path }); disposers.push(f.close);
-  const job = new JobStore(f).create({ source: 'imessage', source_message_id: 'outbox-race', source_chat_id: 'chat-a', requester_id: 'requester', request_text: 'outbox race' }).job;
+  const job = new JobStore(f).create({ source: 'imessage', source_message_id: 'outbox-race', source_chat_id: 'chat-a', requester_id: 'self', request_text: 'outbox race' }).job;
   const row = new OutboxStore(f).enqueue({ job_id: job.job_id, idempotency_key: 'race:outbox', kind: 'done', body: 'notice' }).outbox;
   const results = await race(tmp.path, 'outbox', { outboxId: row.outbox_id }); expect(results.filter(r => r.result?.outbox)).toHaveLength(1); expect(results.filter(r => r.error === 'OUTBOX_NOT_CLAIMABLE')).toHaveLength(3);
   expect(f.db.prepare("SELECT * FROM delivery_outbox WHERE status='sending'").all()).toHaveLength(1);

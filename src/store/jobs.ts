@@ -6,6 +6,7 @@ import { StoreError } from './errors.js';
 import { readEvents, writeEvent } from './events.js';
 import { OutboxStore } from './outbox.js';
 import { failure } from '../lib/reply-text.js';
+import { claimablePolicySql, classifyFamilyRequest, isCapabilitySubset, parseGrantableCapabilities, type FamilyAssessment } from '../policy/family-policy.js';
 
 const clearClaim = 'claimed_at=NULL,claimed_by=NULL,claim_token=NULL,lease_expires_at=NULL,heartbeat_at=NULL';
 export class JobStore {
@@ -16,24 +17,27 @@ export class JobStore {
     if (!row) throw new StoreError('JOB_NOT_FOUND');
     return row;
   }
-  create(input: CreateInput): {job:Job;created:boolean} {
+  create(input: CreateInput): {job:Job;created:boolean;policy:FamilyAssessment|null} {
     const {db,clock,config}=this.deps;
     if (!config.ALLOWED_SOURCE_CHAT_IDS.includes(input.source_chat_id)) throw new StoreError('CHAT_NOT_ALLOWED');
     return db.transaction(() => {
       const existing=db.prepare<[string,string],Job>('SELECT * FROM jobs WHERE source=? AND source_message_id=?').get(input.source,input.source_message_id);
       if (existing) {
         if(existing.source_chat_id!==input.source_chat_id || existing.requester_id!==input.requester_id) throw new StoreError('IDEMPOTENCY_CONFLICT');
-        return {job:existing,created:false};
+        return {job:existing,created:false,policy:null};
       }
       if(input.parent_job_id) this.get(input.parent_job_id);
       const counter=db.prepare<[],{value:number}>("UPDATE id_counters SET value=value+1 WHERE name='job' RETURNING value").get();
       if(!counter) throw new Error('Missing job counter');
       const id=`J-${String(counter.value).padStart(6,'0')}`;
       const now=clock.now();
-      db.prepare(`INSERT INTO jobs(job_id,source,source_message_id,source_chat_id,requester_id,job_type,request_text,payload_ref,status,priority,scheduled_at,created_at,updated_at,max_attempts,correlation_id,parent_job_id,sender_handle)
-        VALUES (?,?,?,?,?,?,?,?,'queued',?,?,?,?,?,?,?,?)`).run(id,input.source,input.source_message_id,input.source_chat_id,input.requester_id,input.job_type??'general',input.request_text??null,input.payload_ref??null,input.priority??0,input.scheduled_at?Date.parse(input.scheduled_at):null,now,now,input.max_attempts??config.JOB_MAX_ATTEMPTS_DEFAULT,input.correlation_id??null,input.parent_job_id??null,input.sender_handle??null);
-      writeEvent(db,{job_id:id,at:now,actor:'api',type:'job.created',to_status:'queued'});
-      return {job:this.get(id),created:true};
+      const policy=input.requester_id==='member'?classifyFamilyRequest(input.request_text??''):null;
+      const status=policy?.decision==='deny'?'cancelled':'queued';
+      const capabilities=policy===null?null:JSON.stringify(policy.capabilities);
+      db.prepare(`INSERT INTO jobs(job_id,source,source_message_id,source_chat_id,requester_id,job_type,request_text,payload_ref,status,priority,scheduled_at,created_at,updated_at,max_attempts,correlation_id,parent_job_id,sender_handle,policy_decision,allowed_capabilities)
+        VALUES (?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?,?,?,?,?)`).run(id,input.source,input.source_message_id,input.source_chat_id,input.requester_id,input.job_type??'general',input.request_text??null,input.payload_ref??null,status,input.priority??0,input.scheduled_at?Date.parse(input.scheduled_at):null,now,now,input.max_attempts??config.JOB_MAX_ATTEMPTS_DEFAULT,input.correlation_id??null,input.parent_job_id??null,input.sender_handle??null,policy?.decision??null,capabilities);
+      writeEvent(db,{job_id:id,at:now,actor:'api',type:'job.created',to_status:status,reason:policy?.decision==='deny'?policy.reasonCode:undefined});
+      return {job:this.get(id),created:true,policy};
     }).immediate();
   }
   list(input: ListInput={}): Job[] {
@@ -49,7 +53,7 @@ export class JobStore {
     return db.transaction(()=>{
       const now=clock.now(); const token=this.deps.ids?.token?.()??randomToken();
       const expires=now+(input.lease_seconds??config.LEASE_SECONDS_DEFAULT)*1000;
-      const eligible="status='queued' AND cancel_requested=0 AND attempts<max_attempts AND (scheduled_at IS NULL OR scheduled_at<=?)";
+      const eligible=`status='queued' AND cancel_requested=0 AND attempts<max_attempts AND (scheduled_at IS NULL OR scheduled_at<=?) AND ${claimablePolicySql}`;
       const types=input.job_types;
       const typeClause=types ? (types.length?` AND job_type IN (${types.map(()=>'?').join(',')})`:' AND 0') : '';
       const select=id?'?':`(SELECT job_id FROM jobs WHERE ${eligible}${typeClause} ORDER BY priority DESC,created_at,job_id LIMIT 1)`;
@@ -86,7 +90,14 @@ export class JobStore {
     const {db,clock}=this.deps;
     return db.transaction(()=>{
       const now=clock.now();
-      const changed=db.prepare("UPDATE jobs SET status='done',result=?,artifact_urls=?,updated_at=? WHERE job_id=? AND status='claimed' AND claim_token=? AND lease_expires_at>?").run(JSON.stringify(input.result),JSON.stringify(input.artifact_urls??[]),now,id,input.claim_token,now).changes;
+      const current=this.get(id);
+      if(current.status!=='claimed') this.rejectWorker(id,input,'complete');
+      else if(current.claim_token!==input.claim_token || current.lease_expires_at===null || current.lease_expires_at<=now) this.rejectWorker(id,input,'complete');
+      if(current.requester_id==='member') {
+        const allowed=parseGrantableCapabilities(current.allowed_capabilities);
+        if(!input.used_capabilities || (current.policy_decision!=='allow' && current.policy_decision!=='approved') || !isCapabilitySubset(input.used_capabilities,allowed)) throw new StoreError('POLICY_DENIED');
+      }
+      const changed=db.prepare(`UPDATE jobs SET status='done',result=?,artifact_urls=?,updated_at=? WHERE job_id=? AND status='claimed' AND claim_token=? AND lease_expires_at>? AND ${claimablePolicySql}`).run(JSON.stringify(input.result),JSON.stringify(input.artifact_urls??[]),now,id,input.claim_token,now).changes;
       if(changed!==1)return {job:this.rejectWorker(id,input,'complete')};
       const row=this.get(id);
       const run=db.prepare("UPDATE job_runs SET outcome='done',ended_at=? WHERE job_id=? AND attempt=? AND outcome='running'").run(now,id,row.attempts);
@@ -94,6 +105,19 @@ export class JobStore {
       writeEvent(db,{job_id:id,at:now,actor:`worker:${row.claimed_by}`,type:'job.done',from_status:'claimed',to_status:'done'});
       if(input.notify)new OutboxStore(this.deps).enqueue({job_id:id,idempotency_key:`job:${id}:done:${row.attempts}`,kind:'done',body:input.notify.body});
       return {job:row};
+    }).immediate();
+  }
+  approve(id:string):{job:Job} {
+    const {db,clock}=this.deps;
+    return db.transaction(()=>{
+      const row=this.get(id);
+      if(row.status!=='queued'||row.policy_decision!=='hold') throw new StoreError('POLICY_NOT_PENDING');
+      parseGrantableCapabilities(row.allowed_capabilities);
+      const now=clock.now();
+      const changed=db.prepare("UPDATE jobs SET policy_decision='approved',updated_at=? WHERE job_id=? AND status='queued' AND policy_decision='hold'").run(now,id).changes;
+      if(changed!==1) throw new StoreError('POLICY_NOT_PENDING');
+      writeEvent(db,{job_id:id,at:now,actor:'genie',type:'job.policy_approved',from_status:'queued',to_status:'queued',reason:'approved'});
+      return {job:this.get(id)};
     }).immediate();
   }
   fail(id:string,input:FailInput):{job:Job} {

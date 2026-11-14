@@ -31,7 +31,7 @@ function fixture(filename = ':memory:', env: Record<string, string> = {}) {
   const outbox = new OutboxStore(deps);
   const app = createApp(deps);
   let seq = 0;
-  const create = (extra: Partial<Parameters<JobStore['create']>[0]> = {}) => jobs.create({ source: 'imessage', source_message_id: `m-${++seq}`, source_chat_id: 'chat-a', requester_id: 'requester', request_text: 'private-request-marker', ...extra }).job;
+  const create = (extra: Partial<Parameters<JobStore['create']>[0]> = {}) => jobs.create({ source: 'imessage', source_message_id: `m-${++seq}`, source_chat_id: 'chat-a', requester_id: 'self', request_text: 'private-request-marker', ...extra }).job;
   const claim = (id: string, worker_id = 'worker-a') => {
     const result = jobs.claim({ worker_id, lease_seconds: 10 }, id);
     if (!result.job || !('claim_token' in result)) throw new Error('Expected a claimed job');
@@ -183,7 +183,7 @@ describe('Masking and request logging', () => {
   });
   test('G45 logs omit request text, authorization, claim token and outbox body', async () => {
     const f = fixture(); const job = f.create(); await f.request(`/jobs/${job.job_id}`); const c = f.claim(job.job_id);
-    await f.request('/jobs', { source: 'imessage', source_message_id: 'http-create', source_chat_id: 'chat-a', requester_id: 'requester', request_text: 'http-private-request-marker' });
+    await f.request('/jobs', { source: 'imessage', source_message_id: 'http-create', source_chat_id: 'chat-a', requester_id: 'self', request_text: 'http-private-request-marker' });
     await f.request(`/jobs/${job.job_id}/complete`, { claim_token: c.claim_token, result: {}, notify: { body: 'http-private-outbox-marker' } });
     const output = f.lines.join('\n'); expect(f.lines.length).toBeGreaterThanOrEqual(3);
     for (const value of ['http-private-request-marker', 'http-private-outbox-marker', f.config.JOB_API_TOKEN, c.claim_token]) expect(output).not.toContain(value);

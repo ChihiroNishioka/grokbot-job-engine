@@ -8,6 +8,7 @@ import { createTailscaleNcTransport } from './worker/tailscale-nc.js';
 import type { Transport } from './worker/transport.js';
 import { completion } from './lib/reply-text.js';
 import { prepareNotification, type NotificationFlags } from './worker/notification.js';
+import { capabilitySchema } from './policy/family-policy.js';
 
 const integer = (fallback: number, max: number) => z.string().regex(/^\d+$/).default(String(fallback)).transform(Number).pipe(z.number().int().positive().max(max));
 const configSchema = z.object({
@@ -27,7 +28,7 @@ const commands = z.discriminatedUnion('command', [
   z.object({ command: z.literal('claim'), input: claim }),
   z.object({ command: z.literal('get'), input: z.strictObject({ job_id: id }) }),
   z.object({ command: z.literal('heartbeat'), input: z.strictObject({ ...tokenFields, lease_seconds: lease }) }),
-  z.object({ command: z.literal('complete'), input: z.strictObject({ ...tokenFields, result: z.record(z.string(), z.unknown()), artifact_urls: artifactUrls.optional(), notify }) }),
+  z.object({ command: z.literal('complete'), input: z.strictObject({ ...tokenFields, result: z.record(z.string(), z.unknown()), artifact_urls: artifactUrls.optional(), used_capabilities: z.array(capabilitySchema).optional(), notify }) }),
   z.object({ command: z.literal('fail'), input: z.strictObject({ ...tokenFields, error: z.strictObject({ code: z.string().regex(/^[A-Z0-9_]{1,64}$/), message: z.string().refine(value => [...value].length <= 1000) }), notify }) }),
   z.object({ command: z.literal('outbox'), input: z.strictObject({ worker_id: worker, lease_seconds: lease, outbox_id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional() }) }),
 ]);

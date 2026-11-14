@@ -18,4 +18,4 @@ Genie との接続には genie-in-messages の別 PR、ブランチ `feat/job-en
 
 送信者ハンドルと家族グループ受付は実機で未確認です。imsgが返すsenderの形、家族の端末からGenie経由で受付・Worker claim・完了まで配送されること、オーナーの管理コマンド、家族のコマンドが無返信となることを確認する必要があります。ログとdeadletterの漏えい検査は実際の値を共有せず、あり・なしだけ記録してください。
 
-実DBのバックアップとv3移行、DBコピーを旧版で開けないこと、Routineのmember権限方針、CLIの出力が会話記録へ残る範囲、グループ返信のレート制限も未確認です。有効化の前にRoutineのmember権限方針をオーナーが確認してください。
+実DBのバックアップとv4移行、DBコピーを旧版で開けないこと、Routineが `allowed_capabilities` の範囲内だけで動くこと、CLIの出力が会話記録へ残る範囲、グループ返信のレート制限も未確認です。有効化の前にRoutineが capability 制限を構造的に守ることをオーナーが確認してください。Job Engine 側では決定的な分類、claim 条件、complete の `used_capabilities` 検査を実装済みですが、Routine の実装はこのリポジトリ外です。

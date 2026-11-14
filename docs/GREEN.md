@@ -217,7 +217,27 @@
 | JE-SH9 | 家族の上限超過はtoo_long返信を一度だけ作る | `test/ingress/sender-handle.test.ts` |
 | JE-SH10 | 家族のbot_replyとemptyは保存しない | `test/ingress/sender-handle.test.ts` |
 | JE-SH11 | ハンドル変更と並行再送、自分のキーなし再送でも最初のジョブを保持。家族のキーなしは無視 | `test/ingress/sender-handle.test.ts` |
-| JE-SH12 | v0/v1/v2からv3、再open、NULL、sequence保持、長さCHECK、未来v4拒否 | `test/migration-genie.test.ts` |
+| JE-SH12 | v0/v1/v2からv3、再open、NULL、sequence保持、長さCHECK。JE-FP3ではこの版からv4へ移行 | `test/migration-genie.test.ts` |
+
+## 家族ジョブの権限ポリシー
+
+| ID | 条件 | 置き場所 |
+|---|---|---|
+| JE-FP1 | `OWNER_NOTIFY_CHAT_ID` は空が既定。家族グループ有効時は安全な整数かつ `GENIE_ALLOWED_CHAT_IDS` に含まれ、グループには含まれない。違反は値を含まない `ConfigError` で、fields は `OWNER_NOTIFY_CHAT_ID` | `test/config.test.ts` |
+| JE-FP2 | 純粋な決定的分類が仕様の ALLOW、DENY、HOLD 例を分類する。DENY は ALLOW より優先し、HOLD は自動実行 capability を付けない。理由コードとグループ返信に依頼本文やハンドルを含めない | `test/policy/family-policy.test.ts` |
+| JE-FP3 | v0〜v3 は v4 に移行し、非終端 member（queued と claimed）を hold と空配列にする。self と終端行は NULL のまま。jobs の status CHECK と行、外部キー、sequence を保ち、outbox の `notify` kind を許可する。再実行可能で v5 以上を拒否する | `test/migration-genie.test.ts` |
+| JE-FP4 | get と個別 job 操作は policy fields を返す。list、events、Reconciler 報告は返さない。self/NULL と member/allow または approved だけを claim し、member の NULL policy は claim / complete できない。hold と deny は取得しない。Dispatcher と staleQueued は hold を実行可能な滞留として扱わない | `test/api.test.ts`, `test/core.test.ts`, `test/policy/family-policy-store.test.ts` |
+| JE-FP5 | member の complete は `used_capabilities` を要求し、保存済み許可の部分集合だけを受け付ける。拒否は job、run、event を変えない。self は省略でき、指定値も検査しない | `test/api.test.ts` |
+| JE-FP6 | Worker は policy fields を配列または null として読む。古いサーバーでキーがなくても claim を読める。`process({job})` の成功 capability を complete に送る。Strict schema は未知の create / complete キーを拒否する | `test/worker/family-policy.test.ts`, `test/api.test.ts` |
+| JE-FP7 | Genie の allow は従来の ack、deny は cancelled と短いお断りだけで ack を作らず同じ guid を再送しても同じ拒否応答、hold は queued のまま承認待ち ack とオーナー通知を作る。通知本文はオーナー chat だけを宛先にし、ハンドルを伏せる | `test/ingress/family-policy.test.ts` |
+| JE-FP8 | オーナーは `/approve` と `/許可` を hold にだけ使える。成功は approved に CAS し、再送に冪等。承認前は claim できず、承認後は claim できる。deny は retry できない | `test/ingress/family-policy.test.ts` |
+| JE-FP9 | オーナー通知 chat は元 chat と同じ秘匿規則で `/approve`、`/cancel`、`/status`、`/retry`、`/help` を処理する。家族の管理コマンドは無視し、他 chat に job の存在を漏らさない | `test/ingress/family-policy.test.ts` |
+| JE-FP10 | SPEC 14.5、AGENTS、worker、genie、status、.env.example、GREEN は構造的な権限検査、v4、承認手順、有効化前の Routine 確認を記載する | `test/docs.test.ts`, `test/hygiene.test.ts` |
+
+## 送信者ハンドルの取得と表示
+
+| ID | 条件 | 置き場所 |
+|---|---|---|
 | JE-SH13 | get/claim/complete/fail/cancel/retryはsender_handleを返し、list/eventsは返さない | `test/sender-handle-store.test.ts` |
 | JE-SH14 | Worker processに文字列かnullを渡す。旧応答の欠落はnull。Outcomeに値がない | `test/worker/sender-handle.test.ts` |
 | JE-SH15 | /statusの文面は依頼者表示を追加せず、ハンドルを含まない | `test/ingress/sender-handle.test.ts` |

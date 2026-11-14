@@ -2,6 +2,7 @@ import type { Deps, Job, Outbox } from '../store/types.js';
 import { OutboxStore } from '../store/outbox.js';
 import { failure } from '../lib/reply-text.js';
 import { writeEvent } from '../store/events.js';
+import { claimablePolicySql } from '../policy/family-policy.js';
 
 export interface ReconcileReport {
   requeued: string[];
@@ -82,7 +83,7 @@ export function reconcile(
   report.staleQueued = db.prepare<[number, number, number, number], { id: string; ageMs: number }>(`
     SELECT job_id AS id, ?-created_at AS ageMs FROM jobs
     WHERE status='queued' AND cancel_requested=0 AND attempts<max_attempts
-      AND (scheduled_at IS NULL OR scheduled_at<=?) AND created_at<?
+      AND (scheduled_at IS NULL OR scheduled_at<=?) AND ${claimablePolicySql} AND created_at<?
     ORDER BY created_at,job_id LIMIT ?
   `).all(now, now, now - queuedStaleMs, limit);
   report.staleOutbox = db.prepare<[number, number, number], { id: number; ageMs: number }>(`
@@ -93,7 +94,9 @@ export function reconcile(
   report.terminalWithoutOutbox = db.prepare<[number, number, number], { id: string; ageMs: number }>(`
     SELECT j.job_id AS id, ?-j.updated_at AS ageMs FROM jobs AS j
     WHERE j.status IN ('done','failed','cancelled') AND j.updated_at<?
-      AND NOT EXISTS (SELECT 1 FROM delivery_outbox AS o WHERE o.job_id=j.job_id AND o.kind=j.status AND o.idempotency_key='job:' || j.job_id || ':' || j.status || ':' || j.attempts)
+      AND NOT EXISTS (SELECT 1 FROM delivery_outbox AS o WHERE o.job_id=j.job_id AND o.kind=j.status AND
+        ((j.policy_decision='deny' AND o.idempotency_key='job:' || j.job_id || ':cancelled') OR
+         (j.policy_decision IS NOT 'deny' AND o.idempotency_key='job:' || j.job_id || ':' || j.status || ':' || j.attempts)))
     ORDER BY j.updated_at,j.job_id LIMIT ?
   `).all(now, now - outboxStaleMs, limit);
   return report;

@@ -17,7 +17,7 @@ box の tailscaled は userspace-networking で動作し、SOCKS と HTTP のプ
 `runWorkerOnce({client, claim, process})` は次の順番で動作します。
 
 1. `claim` で 1 件を取得します。応答の `job.attempts` は今回を含む試行回数、`job.max_attempts` は試行上限です。ジョブが無ければ `outcome: "idle"` で終了します。
-2. 処理関数 `process({job, claimToken, heartbeat})` にジョブ、claim token、`heartbeat(): Promise<boolean>` を渡します。長い処理は lease 内に heartbeat を呼びます。heartbeat() が true を返したら、処理関数で処理を止め、`{ok:false, code:"PROCESSING_ERROR"}` を返してください。`runWorkerOnce` が `fail` を送ります。CLI の場合は heartbeat 応答の `cancel_requested:true` を確認して処理を止め、同じコードで `fail` を呼んでください。
+2. 処理関数 `process({job, claimToken, heartbeat, can, require})` にジョブ、claim token、`heartbeat(): Promise<boolean>`、capability の検査を渡します。`can(capability)` は許可の有無、`require(capability)` は許可がなければ例外を投げ、その後の副作用を走らせません。`requester_id` が `self` と一致するジョブだけ制限しません。それ以外は `allowed_capabilities` に含まれる操作だけを許し、配列が null、欠落、空なら何も許しません。古いサーバーの claim 応答に `requester_id` が無くても受理しますが、そのジョブは制限ありとして扱います。長い処理は lease 内に heartbeat を呼びます。heartbeat() が true を返したら、処理関数で処理を止め、`{ok:false, code:"PROCESSING_ERROR"}` を返してください。`runWorkerOnce` が `fail` を送ります。CLI の場合は heartbeat 応答の `cancel_requested:true` を確認して処理を止め、同じコードで `fail` を呼んでください。
 3. 成果物URLを検証してから、処理関数が成功として返す `{ok?:true, result, artifact_urls?, notify?}` を `complete` に送ります。`notify` が無ければ、文字列の `result.summary`（それ以外は「結果を保存しました。」）と成果物 URL から仕様 13.4 の完了文を作ります。
 4. 処理関数が `{ok:false, code, message?, notify?}` を返した場合、または例外を投げた場合は `fail` に送ります。`code` は下表の固定コードから選べます。例外には `PROCESSING_ERROR` を使います。サーバーの `cancel_requested` が true なら `cancelled` に遷移し、`ジョブ <job_id> はキャンセルしました。` の文だけが通知されます。指定した `notify.body` は使いません。
 
@@ -151,12 +151,18 @@ API の 4xx は code と message を保持します。設定値、トークン�
 
 家族のジョブの既定は無効です。`GENIE_GROUP_CHAT_IDS` が空なら作成しません。
 
-**`member` のジョブはオーナーの道具と権限で動く。`GENIE_GROUP_CHAT_IDS` を設定する前に、Routine 側で member に許す操作を決めること。** この方針をオーナーが確認してから有効化してください。Job Engine は操作ごとの権限を制限しません。
+**`member` のジョブはオーナーの道具と権限で動きます。** Job Engine は決定的なポリシーを保存し、claim と complete でも検査します。これは Routine の実装に代わるものではありません。`requester_id` が `self` と一致しないジョブでは、Routine は副作用の前に `require`（または同等の検査）を行ってください。欠落や未知の `requester_id` も制限ありです。制限ありのジョブでは `allowed_capabilities` が null、欠落、空配列なら、`can` は常に false で、`require` は拒否します。古いサーバーがこれらのキーを返さなくても claim は受理しますが、無制限には扱いません。完了時の `used_capabilities` 自己申告だけでは、すでに起きた副作用を取り消せません。`process({job})` は `job.allowed_capabilities` に無い操作をしないでください。制限ありのジョブで `allowed_capabilities: []` は、許可された操作がないことを表します。`requester_id: 'self'` のジョブは従来どおり制限しません。
 
-受付の返信には本文の先頭 40 字が入り、完了・失敗通知には `notify.body` の結果の要約や URL が入ることがあります。どちらもグループのメンバー全員に見えます。
+完了時は実際に使った capability を `used_capabilities` として返します。列挙値は `lookup`、`family_calendar_read`、`family_calendar_add`、`family_notes_append`、`notify_owner`、`booking`、`owner_mail`、`owner_line`、`owner_personal_event_write`、`purchase`、`message_others`、`dev_settings`、`vault` です。member の complete はこの配列が必須で、保存済み許可の部分集合でない場合は 400 `POLICY_DENIED` になります。拒否後も job は claimed のままで、lease 切れ時に Reconciler が再キューまたは失敗にします。無効な報告で再送せず、Routine の結果を直すかオーナーに連絡してください。self のジョブはこの検査を受けません。
 
-依頼者の種類は `requester_id` の `self` と `member` で見分けます。`process({job})` の `job.sender_handle` は個人情報です。家族の正規化済みの `tel:` または `email:` 付き文字列で、自分のジョブはnullです。旧Job Engineがキーを返さなくてもWorkerはnullにそろえます。`runWorkerOnce` のOutcomeには含めません。
+自動許可は `lookup`、`family_calendar_read`、`family_calendar_add`、`family_notes_append`、`notify_owner` です。予約など曖昧な依頼は hold になり、オーナーが `/approve` したあとに限り提案された `booking` などを使えます。オーナー通知には承認後に許可する capability が表示されます。メール、LINE、購入、他者への連絡、開発・設定、Vault、個人予定の変更は禁止されます。分類は決定的な関数で行い、LLM 判定にはしません。型と実行時スキーマは `src/policy/family-policy.ts` にあります。
 
-worker-cli の claim / get / complete / fail の標準出力には生の `sender_handle` が出ます。Job API の cancel と retry の応答にも含まれます。Routine は結果、通知、ログに書き写さないでください。CLIの出力をRoutineの会話記録へ取り込む場合も個人情報が残りうるため、保存範囲をオーナーが確認してください。
+`GENIE_GROUP_CHAT_IDS` を設定する前に、Routine が capability を構造的に守ることを確認してください。`OWNER_NOTIFY_CHAT_ID` はオーナーの許可済み個人トークで、member の hold 通知と `/approve` に使います。
+
+受付の返信には本文の先頭 40 字が入り、完了・失敗通知には `notify.body` の結果の要約や URL が入ることがあります。どちらもグループのメンバー全員に見えます。hold の承認通知は `OWNER_NOTIFY_CHAT_ID` にだけ送られます。
+
+現行サーバーは `requester_id` に `self` または `member` を返します。`process({job})` の `job.sender_handle` は個人情報です。家族の正規化済みの `tel:` または `email:` 付き文字列で、自分のジョブはnullです。旧Job Engineが `sender_handle` キーを返さなくてもWorkerはnullにそろえます。`runWorkerOnce` のOutcomeには含めません。
+
+worker-cli の claim / get / complete / fail の標準出力には `sender_handle` とポリシー情報が出ます。Job API の cancel と retry の応答にも含まれます。Routine は結果、通知、ログに書き写さないでください。CLIの出力をRoutineの会話記録へ取り込む場合も個人情報が残りうるため、保存範囲をオーナーが確認してください。
 
 サーバーは保存値全体と接頭辞を除いた部分を一致検索して、受付、通知、コマンド返信、保存するerror.messageから伏せます。大小文字は区別しません。ハンドルのないジョブの文は変えません。区切りを入れた電話番号など、保存値と書式が違う文までは保証しません。成果物URL内の一致部分も伏せますが、それ以外のパスとクエリは変えません。

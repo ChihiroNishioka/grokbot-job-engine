@@ -20,7 +20,7 @@ test.each([
   const c = context(); contexts.push(c);
   const created = new JobStore(c).create({
     source: 'imessage', source_message_id: 'worker-sender-guid', source_chat_id: '21',
-    requester_id: handle === null ? 'self' : 'member', request_text: '調べてください',
+    requester_id: handle === null ? 'self' : 'member', request_text: '今日の天気は？',
     ...(handle === null ? {} : { sender_handle: handle }),
   });
   const transport: Transport = { async request(request) {
@@ -42,7 +42,7 @@ test.each([
     process: async ({ job, heartbeat }) => {
       received.push(job.sender_handle);
       expect(await heartbeat()).toBe(false);
-      return { result: { summary: '確認しました' } };
+      return { result: { summary: '確認しました' }, ...(handle === null ? {} : { used_capabilities: ['lookup'] }) };
     },
   });
   expect(received).toEqual([handle]);

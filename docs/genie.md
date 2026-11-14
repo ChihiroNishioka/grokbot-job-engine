@@ -125,14 +125,16 @@ complete / fail と Reconciler の終端通知は `job:<job_id>:<kind>:<attempt>
 
 ## 家族のグループを有効にする
 
-`GENIE_GROUP_CHAT_IDS` の既定は空で、家族の受付は無効です。空や空白だけのカンマ要素は除き、安全な整数として解析します。全要素がGENIE_ALLOWED_CHAT_IDSに必要で、その値はALLOWED_SOURCE_CHAT_IDSにも必要です。Genieはgroup_chat_guidsで照合したグループだけにsender_handleを付けます。メニューの許可だけでは付きません。
+`GENIE_GROUP_CHAT_IDS` の既定は空で、家族の受付は無効です。空や空白だけのカンマ要素は除き、安全な整数として解析します。全要素がGENIE_ALLOWED_CHAT_IDSに必要で、その値はALLOWED_SOURCE_CHAT_IDSにも必要です。Genieはgroup_chat_guidsで照合したグループだけにsender_handleを付けます。メニューの許可だけでは付きません。1件でもグループを設定する場合は、オーナーの個人トークである `OWNER_NOTIFY_CHAT_ID` を設定してください。これは `GENIE_ALLOWED_CHAT_IDS` に含め、グループには含めません。
 
-有効化の前に [仕様14章](SPEC.md#14-家族のグループからのジョブ) のmember権限の注意を確認してください。DBをバックアップし、Job Engine を先に更新して空のグループ設定でv3移行を確認します。その後Genieを更新し、Job Engineの3つの許可設定を追加して再起動してから、Genieのjob_chat_idsにグループを足します。新Genieを旧Job Engineにつなぐとハンドル付き要求は400でdeadletterになります。
+有効化の前に [仕様14.5](SPEC.md#145-家族ジョブの権限ポリシー) のmember権限と、Routineが`allowed_capabilities`を構造的に守ることを確認してください。DBをバックアップし、Job Engine を先に更新して空のグループ設定でv4移行を確認します。その後Genieを更新し、Job Engineの許可設定と `OWNER_NOTIFY_CHAT_ID` を追加して再起動してから、Genieのjob_chat_idsにグループを足します。新Genieを旧Job Engineにつなぐとハンドル付き要求は400でdeadletterになります。
 
 受付の返信には本文の先頭 40 字が入り、完了・失敗通知には `notify.body` の結果の要約や URL が入ることがあります。これらの返信はグループのメンバー全員に見えます。
 
-グループの🪔は自分の依頼も含めJob Engineに向かいます。オーナーは同じグループで家族のジョブを/status、/cancel、/retryできます。別の自分宛てトークからは操作できません。家族の管理コマンドは無返信で無視します。
+グループの🪔は自分の依頼も含めJob Engineに向かいます。オーナーはジョブの元グループまたは `OWNER_NOTIFY_CHAT_ID` から家族のジョブに `/status`、`/cancel`、`/retry`、`/approve`（`/許可`）を使えます。`/approve` は hold のジョブだけを承認し、承認結果はコマンドを送ったトークへ返信します。通知トークから承認した場合、返信は通知トークにだけ届きます。deny のジョブは `/retry` できません。家族の管理コマンドは無返信で無視します。
+
+member の依頼は決定的なポリシーで `allow`、`deny`、`hold` に分類します。allow は通常どおり処理され、deny は cancelled として短い断りを返し、hold は claim を止めたままグループへ承認待ちの ack とオーナー個人トークへの通知を作ります。通知には承認後に許可する capability を表示します。承認通知はグループには送信しません。Routine は `allowed_capabilities` を守り、完了時に `used_capabilities` を送る必要があります。詳細は [仕様14.5](SPEC.md#145-家族ジョブの権限ポリシー) を参照してください。
 
 受付のプレビュー、完了と失敗の通知、/statusの成果物URL、cancelとretryの返信から、保存したハンドル全体と接頭辞を除いた部分を伏せます。英字の大小は区別しません。通知にはmask()を追加しないため、無関係なURLの長いパスとクエリは残ります。書式の違う電話番号まで伏せる保証はありません。値はWorkerに渡す以外、ログやイベントには出しません。
 
-家族の新しい受付を止めるにはGENIE_GROUP_CHAT_IDSを空にして再起動します。作成済みジョブはオーナーが/cancelしてください。Genieのjob_chat_idsから外すと新しいメッセージの経路が変わり、再試行中は初回の経路を保ちます。v3のDBは旧版で開けず、ダウングレードは用意しません。
+家族の新しい受付を止めるにはGENIE_GROUP_CHAT_IDSを空にして再起動します。作成済みジョブはオーナーが/cancelしてください。Genieのjob_chat_idsから外すと新しいメッセージの経路が変わり、再試行中は初回の経路を保ちます。v4のDBは旧版で開けず、ダウングレードは用意しません。

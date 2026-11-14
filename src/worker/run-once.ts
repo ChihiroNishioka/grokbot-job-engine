@@ -4,11 +4,19 @@ import type { ClaimInput } from '../store/types.js';
 import { mask } from '../logging/mask.js';
 import { completion, failure, type FailureCode } from '../lib/reply-text.js';
 import { JobApiClient, type ApiResult, type WorkerJob } from './client.js';
+import type { Capability } from '../policy/family-policy.js';
 
 export type ProcessResult =
-  | { ok?: true; result: Record<string, unknown>; artifact_urls?: string[]; notify?: { body: string } }
+  | { ok?: true; result: Record<string, unknown>; artifact_urls?: string[]; used_capabilities?: Capability[]; notify?: { body: string } }
   | { ok: false; code: FailureCode; message?: string; notify?: { body: string } };
-export interface ProcessContext { job: WorkerJob; claimToken: string; heartbeat(): Promise<boolean> }
+export interface ProcessContext { job: WorkerJob; claimToken: string; heartbeat(): Promise<boolean>; can(capability: Capability): boolean; require(capability: Capability): void }
+function capabilityGate(job: WorkerJob): Pick<ProcessContext, 'can' | 'require'> {
+  const allowed = new Set<Capability>(job.allowed_capabilities ?? []);
+  const unrestricted = job.requester_id === 'self';
+  const can = (capability: Capability) => unrestricted || allowed.has(capability);
+  const require = (capability: Capability) => { if (!can(capability)) throw new Error('POLICY_DENIED'); };
+  return { can, require };
+}
 type Outcome = { outcome: 'idle' } | { outcome: 'done' | 'failed' | 'cancelled'; job_id: string } & NotificationFlags & { artifact_urls_omitted?: number } | { outcome: 'unreachable'; reason: string } | { outcome: 'api_error'; status: number; code: string };
 function failedResult(result: Exclude<ApiResult<unknown>, { ok: true }>): Outcome {
   return result.unreachable ? { outcome: 'unreachable', reason: result.reason } : { outcome: 'api_error', status: result.status, code: result.code };
@@ -29,7 +37,7 @@ export async function runWorkerOnce({ client, claim, process }: { client: JobApi
     return reply.data.cancel_requested;
   };
   let result: ProcessResult;
-  try { result = await process({ job, claimToken: claim_token, heartbeat }); }
+  try { result = await process({ job, claimToken: claim_token, heartbeat, ...capabilityGate(job) }); }
   catch (error) {
     result = { ok: false, code: 'PROCESSING_ERROR', message: error instanceof Error ? error.message : '処理中にエラーが起きました' };
   }
@@ -47,6 +55,6 @@ export async function runWorkerOnce({ client, claim, process }: { client: JobApi
   }
   const summary = typeof result.result.summary === 'string' ? result.result.summary : '結果を保存しました。';
   const notification = prepareNotification(result.notify?.body, () => completion(job.job_id, summary, result.artifact_urls));
-  const completed = await client.complete(job.job_id, { claim_token, result: result.result, ...(result.artifact_urls ? { artifact_urls: result.artifact_urls } : {}), notify: { body: notification.body } });
+  const completed = await client.complete(job.job_id, { claim_token, result: result.result, ...(result.artifact_urls ? { artifact_urls: result.artifact_urls } : {}), ...(result.used_capabilities ? { used_capabilities: result.used_capabilities } : {}), notify: { body: notification.body } });
   return completed.ok ? { outcome: 'done', job_id: job.job_id, ...notification.flags, ...artifactOmissionFlags(result.artifact_urls, notification.body) } : failedResult(completed);
 }

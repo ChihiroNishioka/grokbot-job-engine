@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { ConfigError, loadConfig } from '../src/config/index.js';
 
-const valid = () => ({ JOB_API_TOKEN: 'dummy-'.repeat(8), ALLOWED_SOURCE_CHAT_IDS: 'chat-a,chat-b,21', GENIE_TOKEN: 'dummy-genie-'.repeat(4), GENIE_ALLOWED_CHAT_IDS: '21' });
+const valid = () => ({ JOB_API_TOKEN: 'dummy-'.repeat(8), ALLOWED_SOURCE_CHAT_IDS: 'chat-a,chat-b,21', GENIE_TOKEN: 'dummy-genie-'.repeat(4), GENIE_ALLOWED_CHAT_IDS: '21', OWNER_NOTIFY_CHAT_ID: '21' });
 const ranges = {
   PORT: [1, 65535], LEASE_SECONDS_DEFAULT: [10, 3600], LEASE_SECONDS_MAX: [10, 86400],
   JOB_MAX_ATTEMPTS_DEFAULT: [1, 10], REQUEST_TEXT_MAX_CHARS: [1, 100000],
@@ -85,4 +85,25 @@ test.each([
   expect(error).toMatchObject({ fields: ['GENIE_GROUP_CHAT_IDS'] });
   expect(error).toBeInstanceOf(Error);
   if (error instanceof Error) expect(error.message).not.toContain(overrides.GENIE_GROUP_CHAT_IDS);
+});
+
+test.each([
+  ['missing owner chat', undefined, ['21', '22'], ['22']],
+  ['empty owner chat', '', ['21', '22'], ['22']],
+  ['invalid owner chat', 'not-a-chat', ['21', '22'], ['22']],
+  ['owner chat outside allowed set', '23', ['21', '22'], ['22']],
+  ['owner chat overlaps group', '22', ['21', '22'], ['22']],
+])('JE-FP1 rejects %s without revealing the configured value', (_name, owner, allowed, groups) => {
+  let error: unknown;
+  try {
+    loadConfig({ ...valid(), ALLOWED_SOURCE_CHAT_IDS: allowed.join(','), GENIE_ALLOWED_CHAT_IDS: allowed.join(','), GENIE_GROUP_CHAT_IDS: groups.join(','), OWNER_NOTIFY_CHAT_ID: owner });
+  } catch (caught) { error = caught; }
+  expect(error).toBeInstanceOf(ConfigError);
+  expect(error).toMatchObject({ fields: ['OWNER_NOTIFY_CHAT_ID'] });
+  if (error instanceof Error && owner) expect(error.message).not.toContain(owner);
+});
+
+test('JE-FP1 owner chat defaults empty and a valid private chat is accepted', () => {
+  expect(loadConfig({ ...valid(), OWNER_NOTIFY_CHAT_ID: undefined }).OWNER_NOTIFY_CHAT_ID).toBeNull();
+  expect(loadConfig({ ...valid(), ALLOWED_SOURCE_CHAT_IDS: '21,22', GENIE_ALLOWED_CHAT_IDS: '21,22', GENIE_GROUP_CHAT_IDS: '22', OWNER_NOTIFY_CHAT_ID: '21' }).OWNER_NOTIFY_CHAT_ID).toBe(21);
 });

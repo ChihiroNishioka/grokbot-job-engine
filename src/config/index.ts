@@ -24,6 +24,7 @@ const schema = z.object({
   GENIE_TOKEN: z.string().min(32),
   GENIE_ALLOWED_CHAT_IDS: z.string().transform(value => value.split(',').map(id => id.trim())).refine(ids => ids.length > 0 && ids.every(id => /^-?\d+$/.test(id) && Number.isSafeInteger(Number(id)))).transform(ids => ids.map(Number)),
   GENIE_GROUP_CHAT_IDS: z.string().default('').transform(value => value.split(',').map(id => id.trim()).filter(Boolean)).refine(ids => ids.every(id => /^-?\d+$/.test(id) && Number.isSafeInteger(Number(id)))).transform(ids => ids.map(Number)),
+  OWNER_NOTIFY_CHAT_ID: z.string().default('').transform(value => value.trim()).refine(value => value === '' || (/^-?\d+$/.test(value) && Number.isSafeInteger(Number(value)))).transform(value => value === '' ? null : Number(value)),
   GENIE_REPLY_PAGE_LIMIT: integer(50, 1, 100),
   PORT: integer(3320, 1, 65535),
   DATABASE_PATH: z.string().min(1).default('./data/jobs.sqlite'),
@@ -43,7 +44,10 @@ const schema = z.object({
 }).refine(config => config.LEASE_SECONDS_DEFAULT <= config.LEASE_SECONDS_MAX, { path: ['LEASE_SECONDS_DEFAULT'] })
   .refine(config => config.GENIE_TOKEN !== config.JOB_API_TOKEN, { path: ['GENIE_TOKEN'] })
   .refine(config => config.GENIE_ALLOWED_CHAT_IDS.every(id => config.ALLOWED_SOURCE_CHAT_IDS.includes(String(id))), { path: ['GENIE_ALLOWED_CHAT_IDS'] })
-  .refine(config => config.GENIE_GROUP_CHAT_IDS.every(id => config.GENIE_ALLOWED_CHAT_IDS.includes(id)), { path: ['GENIE_GROUP_CHAT_IDS'] });
+  .refine(config => config.GENIE_GROUP_CHAT_IDS.every(id => config.GENIE_ALLOWED_CHAT_IDS.includes(id)), { path: ['GENIE_GROUP_CHAT_IDS'] })
+  .refine(config => config.GENIE_GROUP_CHAT_IDS.length === 0 || config.OWNER_NOTIFY_CHAT_ID !== null, { path: ['OWNER_NOTIFY_CHAT_ID'] })
+  .refine(config => config.OWNER_NOTIFY_CHAT_ID === null || config.GENIE_ALLOWED_CHAT_IDS.includes(config.OWNER_NOTIFY_CHAT_ID), { path: ['OWNER_NOTIFY_CHAT_ID'] })
+  .refine(config => config.OWNER_NOTIFY_CHAT_ID === null || !config.GENIE_GROUP_CHAT_IDS.includes(config.OWNER_NOTIFY_CHAT_ID), { path: ['OWNER_NOTIFY_CHAT_ID'] });
 
 export type Config = z.infer<typeof schema>;
 export class ConfigError extends Error {

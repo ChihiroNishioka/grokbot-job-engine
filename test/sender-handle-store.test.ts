@@ -5,6 +5,7 @@ import { OutboxStore } from '../src/store/outbox.js';
 import { reconcile } from '../src/reconciler/index.js';
 import { createLogger } from '../src/logging/logger.js';
 import { context, claimToken, rows } from './helpers/context.js';
+import type { CreateInput } from '../src/store/types.js';
 
 const phone = ['+1', '555', '010', '0000'].join('');
 const short = ['555', '0100'].join('');
@@ -16,7 +17,7 @@ const responseOutbox = z.looseObject({ body: z.string() });
 function fixture(handle?: string) {
   const c = context();
   const store = new JobStore(c);
-  const input = { source: 'imessage' as const, source_message_id: 'sender-store', source_chat_id: '21', requester_id: handle === undefined ? 'self' : 'member', request_text: 'work', ...(handle === undefined ? {} : { sender_handle: handle }) };
+  const input: CreateInput = { source: 'imessage', source_message_id: 'sender-store', source_chat_id: '21', requester_id: handle === undefined ? 'self' : 'member', request_text: '今日の天気は？', ...(handle === undefined ? {} : { sender_handle: handle }) };
   const id = store.create(input).job.job_id;
   const claim = async () => {
     const reply = await c.req('POST', `/jobs/${id}/claim`, { worker_id: 'dummy-worker', lease_seconds: 10 });
@@ -48,7 +49,7 @@ describe('sender handle storage and authenticated API', () => {
       else if (operation === 'cancel') reply = await c.req('POST', `/jobs/${id}/cancel`, {});
       else {
         const token = await claim();
-        if (operation === 'complete') reply = await c.req('POST', `/jobs/${id}/complete`, { claim_token: token, result: {} });
+        if (operation === 'complete') reply = await c.req('POST', `/jobs/${id}/complete`, { claim_token: token, result: {}, used_capabilities: ['lookup'] });
         else {
           reply = await c.req('POST', `/jobs/${id}/fail`, { claim_token: token, error: { code: 'DUMMY', message: 'failed' } });
           if (operation === 'retry') reply = await c.req('POST', `/jobs/${id}/retry`, {});
@@ -101,7 +102,7 @@ describe('sender handle redaction at outbound boundaries', () => {
         expect(responseOutbox.parse(first.body.outbox).body).toBe(`依頼者 [REDACTED] / [REDACTED] ${longUrl}`);
       } else {
         const token = await claim();
-        const value = operation === 'complete' ? { claim_token: token, result: {}, notify: { body } } : { claim_token: token, error: { code: 'DUMMY', message: 'failure' }, notify: { body } };
+        const value = operation === 'complete' ? { claim_token: token, result: {}, used_capabilities: ['lookup'], notify: { body } } : { claim_token: token, error: { code: 'DUMMY', message: 'failure' }, notify: { body } };
         expect((await c.req('POST', `/jobs/${id}/${operation}`, value)).status).toBe(200);
       }
       expect(rows(c, 'delivery_outbox').at(-1)?.body).toBe(`依頼者 [REDACTED] / [REDACTED] ${longUrl}`);
@@ -125,7 +126,7 @@ describe('sender handle redaction at outbound boundaries', () => {
       if (operation === 'outbox') expect((await c.req('POST', '/outbox', { job_id: id, idempotency_key: 'unchanged', kind: 'done', body })).status).toBe(201);
       else {
         const token = await claim();
-        const value = operation === 'complete' ? { claim_token: token, result: {}, notify: { body } } : { claim_token: token, error: { code: 'DUMMY', message: 'failure' }, notify: { body } };
+        const value = operation === 'complete' ? { claim_token: token, result: {}, used_capabilities: ['lookup'], notify: { body } } : { claim_token: token, error: { code: 'DUMMY', message: 'failure' }, notify: { body } };
         expect((await c.req('POST', `/jobs/${id}/${operation}`, value)).status).toBe(200);
       }
       expect(rows(c, 'delivery_outbox').at(-1)?.body).toBe(body);

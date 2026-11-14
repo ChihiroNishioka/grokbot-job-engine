@@ -14,7 +14,7 @@ function fixture(env: Record<string, string> = { GENIE_GROUP_CHAT_IDS: '22' }) {
   const c = setup(env); contexts.push(c); return c;
 }
 function family(overrides: Record<string, unknown> = {}) {
-  return payload({ chat_id: 22, sender_is_me: false, sender_handle: H, text: '🪔 調べて', ...overrides });
+  return payload({ chat_id: 22, sender_is_me: false, sender_handle: H, text: '🪔 天気を調べて', ...overrides });
 }
 const noRows = (c: ReturnType<typeof setup>) => {
   for (const table of ['jobs', 'delivery_outbox', 'ingress_messages'] as const) expect(c.table(table), table).toHaveLength(0);
@@ -32,7 +32,7 @@ test.each([H, E])('JE-SH3 accepted family job stores first handle (%#)', async h
   expect(r.status).toBe(201);
   const id = created.parse(r.body).job_id;
   expect(c.table('jobs')).toHaveLength(1);
-  expect(c.table('jobs')[0]).toMatchObject({ job_id: id, requester_id: 'member', sender_handle: handle, source_chat_id: '22', request_text: '調べて' });
+  expect(c.table('jobs')[0]).toMatchObject({ job_id: id, requester_id: 'member', sender_handle: handle, source_chat_id: '22', request_text: '天気を調べて' });
   expect(c.table('delivery_outbox')).toHaveLength(1);
   expect(c.table('delivery_outbox')[0]).toMatchObject({ kind: 'ack', channel: 'genie', target_chat_id: '22', job_id: id });
   expect(c.table('ingress_messages')).toHaveLength(1);
@@ -138,7 +138,7 @@ test.each([H, E])('JE-SH15 A2 A4 status and completion redact handles while pres
   if (!claim.job) throw Error('Missing claim');
   const bare = handle.slice(handle.indexOf(':') + 1);
   const urls = [`https://example.com/x/${bare}/y`, `https://example.com/${'a'.repeat(40)}`, 'https://example.com/result?key=abc&view=all'];
-  store.complete(id, { claim_token: claim.claim_token, result: {}, artifact_urls: urls, notify: { body: urls.join('\n') } });
+  store.complete(id, { claim_token: claim.claim_token, result: {}, used_capabilities: ['lookup'], artifact_urls: urls, notify: { body: urls.join('\n') } });
   const original = statusReply(store.get(id), true);
   for (const [n, suffix] of ['', ' 1'].entries()) {
     const guid = `owner-status-${n}`;
@@ -156,12 +156,14 @@ test.each([H, E])('JE-SH15 A2 A4 status and completion redact handles while pres
   expect(completed?.body).toBe(urls.join('\n').replaceAll(bare, '[REDACTED]'));
 });
 
-test('JE-SH15b ack and replies redact email inside request text', async () => {
+test('JE-SH15b denied member email requests do not expose the private text', async () => {
   const c = fixture();
-  expect((await c.request('/ingress/genie', family({ sender_handle: E, text: '🪔 family@example.com に連絡' }))).status).toBe(201);
-  const ack = z.string().parse(c.table('delivery_outbox')[0]?.body);
-  expect(ack).toContain('[REDACTED] に連絡');
-  expect(ack).not.toContain('family@example.com');
+  const response = await c.request('/ingress/genie', family({ sender_handle: E, text: '🪔 今日の天気は？ メールの内容を教えて' }));
+  expect(response.status).toBe(200);
+  expect(response.body).toMatchObject({ status: 'rejected', reason: 'policy_denied' });
+  const reply = z.string().parse(c.table('delivery_outbox')[0]?.body);
+  expect(reply).not.toContain('メールの内容');
+  expect(reply).not.toContain('family@example.com');
   const replies = page.parse((await c.request('/genie/replies')).body);
   expect(replies.replies[0]?.text).not.toContain('family@example.com');
 });
@@ -173,7 +175,7 @@ test('JE-SH15 regression self ack and status preserve text and URLs', async () =
   const store = new JobStore(c);
   const claimed = store.claim({ worker_id: 'dummy-worker' }, id);
   if (!claimed.job) throw Error('Missing claim');
-  store.complete(id, { claim_token: claimed.claim_token, result: {}, artifact_urls: ['https://example.com/x/family@example.com/y'] });
+  store.complete(id, { claim_token: claimed.claim_token, result: {}, used_capabilities: ['lookup'], artifact_urls: ['https://example.com/x/family@example.com/y'] });
   await c.request('/ingress/genie', payload({ chat_id: 22, guid: 'status', idempotency_key: 'status', text: `/status ${id}` }));
   expect(c.table('delivery_outbox').at(-1)?.body).toBe(statusReply(store.get(id), true));
 });
@@ -188,7 +190,7 @@ test('JE-SH16 full lifecycle logs never contain saved handles', async () => {
   expect((await c.req('POST', `/jobs/${id}/fail`, { claim_token: claimToken, error: { code: 'PROCESSING_ERROR', message: `${handle} ${phone} failed` } })).status).toBe(200);
   expect((await c.req('POST', `/jobs/${id}/retry`, {})).status).toBe(200);
   const second = await c.req('POST', `/jobs/${id}/claim`, { worker_id: 'dummy-worker' });
-  expect((await c.req('POST', `/jobs/${id}/complete`, { claim_token: second.body.claim_token, result: {} })).status).toBe(200);
+  expect((await c.req('POST', `/jobs/${id}/complete`, { claim_token: second.body.claim_token, result: {}, used_capabilities: ['lookup'] })).status).toBe(200);
   expect((await c.request('/genie/replies')).status).toBe(200);
   for (const value of [H, phone, short, E, 'family@example.com']) expect(c.logs.join('\n')).not.toContain(value);
 });
@@ -225,7 +227,7 @@ test('JE-SH15 A2 redacted URL growth preserves status limits without cutting the
   const claimed = store.claim({ worker_id: 'dummy-worker' }, id);
   if (!claimed.job) throw Error('Missing claim');
   const url = `https://example.com/${short.repeat(160)}/end`;
-  store.complete(id, { claim_token: claimed.claim_token, result: {}, artifact_urls: [url], notify: { body: url } });
+  store.complete(id, { claim_token: claimed.claim_token, result: {}, used_capabilities: ['lookup'], artifact_urls: [url], notify: { body: url } });
   const guid = 'status-expanded';
   await c.request('/ingress/genie', payload({ chat_id: 22, guid, idempotency_key: guid, text: `/status ${id}` }));
   const body = z.string().parse(c.table('delivery_outbox').at(-1)?.body);

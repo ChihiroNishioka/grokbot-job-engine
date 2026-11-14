@@ -1,9 +1,10 @@
 import { z } from 'zod';
 import type { ClaimInput, TokenInput, CompleteInput, FailInput, OutboxClaimInput } from '../store/types.js';
 import type { Transport, Unreachable } from './transport.js';
+import { grantableCapabilitySchema, policyDecisionSchema } from '../policy/family-policy.js';
 
 export type ApiResult<T> = { ok: true; data: T } | Unreachable | { ok: false; unreachable: false; status: number; code: string; message?: string };
-const claimedJob = z.looseObject({ job_id: z.string().regex(/^J-\d{6,}$/), request_text: z.string().nullable(), sender_handle: z.string().nullable().optional().default(null), attempts: z.number().int().nonnegative(), max_attempts: z.number().int().min(1).max(10) });
+const claimedJob = z.looseObject({ job_id: z.string().regex(/^J-\d{6,}$/), request_text: z.string().nullable(), sender_handle: z.string().nullable().optional().default(null), requester_id: z.string().nullable().optional(), policy_decision: policyDecisionSchema.nullable().optional().default(null), allowed_capabilities: z.array(grantableCapabilitySchema).nullable().optional().default(null), attempts: z.number().int().nonnegative(), max_attempts: z.number().int().min(1).max(10) });
 export type WorkerJob = z.infer<typeof claimedJob>;
 const heartbeatReply = z.object({ cancel_requested: z.boolean(), lease_expires_at: z.string().optional() });
 const claimReply = z.union([z.object({ job: z.null() }), z.object({ job: claimedJob, claim_token: z.string().min(1) })]);
