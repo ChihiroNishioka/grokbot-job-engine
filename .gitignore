@@ -10,3 +10,4 @@ coverage/
 *.db-wal
 *.sqlite
 *.log
+data/
